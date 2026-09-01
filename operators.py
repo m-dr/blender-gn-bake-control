@@ -65,74 +65,91 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
         if not root_tree and ntree:
             root_tree = ntree
 
-        # 3. Find Node Editor space, area, and window region in active screen
-        target_space = None
-        target_area = None
-        target_region = None
+        if not root_tree:
+            self.report({'WARNING'}, "No node tree found to navigate to.")
+            return {'CANCELLED'}
+
+        # 3. Find and update all Node Editor spaces in active screen
+        found_node_editor = False
 
         for area in context.screen.areas:
             if area.type == 'NODE_EDITOR':
-                target_area = area
-                for space in area.spaces:
-                    if space.type == 'NODE_EDITOR':
-                        target_space = space
+                found_node_editor = True
+                space = area.spaces.active
+                if not space:
+                    continue
+
+                region_win = None
+                for r in area.regions:
+                    if r.type == 'WINDOW':
+                        region_win = r
                         break
-                for region in area.regions:
-                    if region.type == 'WINDOW':
-                        target_region = region
-                        break
-                if target_space:
-                    break
 
-        if not target_space:
-            self.report({'WARNING'}, "No Geometry Node Editor is open on screen.")
-            return {'CANCELLED'}
+                # Switch tree type and root node tree
+                space.tree_type = 'GeometryNodeTree'
+                space.node_tree = root_tree
 
-        if root_tree:
-            target_space.tree_type = 'GeometryNodeTree'
-            target_space.node_tree = root_tree
-
-            # Build sub-group breadcrumb path if target is a sub-group
-            if ntree and ntree != root_tree:
-                chain = find_group_chain(root_tree, ntree)
-                if chain:
-                    for sub_tree, g_node in chain:
-                        try:
-                            target_space.path.append(sub_tree, node=g_node)
-                        except Exception:
-                            pass
-
-            active_tree = ntree if ntree else root_tree
-
-            if self.node_name:
-                target_node = active_tree.nodes.get(self.node_name)
-                if target_node:
-                    for n in active_tree.nodes:
-                        n.select = False
-                    target_node.select = True
-                    active_tree.nodes.active = target_node
-
-                    # Focus view (Numpad .) onto the selected node
-                    if not bpy.app.background and target_area and target_region:
-                        with context.temp_override(area=target_area, region=target_region, space_data=target_space):
+                # Build sub-group breadcrumb path if target is a sub-group
+                if ntree and ntree != root_tree:
+                    chain = find_group_chain(root_tree, ntree)
+                    if chain:
+                        for sub_tree, g_node in chain:
                             try:
-                                bpy.ops.node.view_selected()
+                                space.path.append(sub_tree, node=g_node)
                             except Exception:
                                 pass
 
-                    self.report({'INFO'}, f"Framed '{target_node.name}' in '{active_tree.name}'")
-                    return {'FINISHED'}
+                active_tree = ntree if ntree else root_tree
 
-            # Frame all in node tree if navigating to modifier
-            if not bpy.app.background and target_area and target_region:
-                with context.temp_override(area=target_area, region=target_region, space_data=target_space):
+                if self.node_name and active_tree:
+                    target_node = active_tree.nodes.get(self.node_name)
+                    if target_node:
+                        for n in active_tree.nodes:
+                            n.select = False
+                        target_node.select = True
+                        active_tree.nodes.active = target_node
+
+                        area.tag_redraw()
+
+                        # Focus view (Numpad .) onto the selected node
+                        if not bpy.app.background and region_win:
+                            try:
+                                with context.temp_override(
+                                    window=context.window,
+                                    screen=context.screen,
+                                    area=area,
+                                    region=region_win,
+                                    space_data=space
+                                ):
+                                    bpy.ops.node.view_selected()
+                            except Exception:
+                                pass
+
+                        self.report({'INFO'}, f"Framed '{target_node.name}' in '{active_tree.name}'")
+                        return {'FINISHED'}
+
+                area.tag_redraw()
+
+                # Frame all in node tree if navigating to modifier
+                if not bpy.app.background and region_win:
                     try:
-                        bpy.ops.node.view_all()
+                        with context.temp_override(
+                            window=context.window,
+                            screen=context.screen,
+                            area=area,
+                            region=region_win,
+                            space_data=space
+                        ):
+                            bpy.ops.node.view_all()
                     except Exception:
                         pass
 
-            self.report({'INFO'}, f"Navigated to '{root_tree.name}'")
-            return {'FINISHED'}
+                self.report({'INFO'}, f"Navigated to '{root_tree.name}'")
+                return {'FINISHED'}
+
+        if not found_node_editor:
+            self.report({'WARNING'}, "No Geometry Node Editor is open on screen.")
+            return {'CANCELLED'}
 
         return {'FINISHED'}
 

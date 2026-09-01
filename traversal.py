@@ -31,13 +31,16 @@ def get_reachable_nodes_in_tree(node_tree):
     return visited
 
 
-def traverse_tree_bakes(node_tree, prefix="", depth=0, is_parent_connected=True, is_parent_muted=False):
+def traverse_tree_bakes(node_tree, prefix="", group_hierarchy=None, is_parent_connected=True, is_parent_muted=False):
     """
     Recursively find all bake nodes and simulation outputs in a node tree in topological execution order.
     Returns (connected_bakes, disconnected_bakes).
     """
     if not node_tree:
         return [], []
+
+    if group_hierarchy is None:
+        group_hierarchy = []
 
     reachable = get_reachable_nodes_in_tree(node_tree)
 
@@ -79,9 +82,9 @@ def traverse_tree_bakes(node_tree, prefix="", depth=0, is_parent_connected=True,
             item = {
                 "name": name,
                 "path": path,
+                "group_name": " > ".join(group_hierarchy) if group_hierarchy else "",
                 "node": node,
                 "tree": node_tree,
-                "depth": depth,
                 "is_connected": node_conn,
                 "is_muted": node_muted,
                 "is_simulation": node.type == 'SIMULATION_OUTPUT',
@@ -97,7 +100,7 @@ def traverse_tree_bakes(node_tree, prefix="", depth=0, is_parent_connected=True,
             sub_conn, sub_dis = traverse_tree_bakes(
                 node.node_tree,
                 prefix=sub_prefix,
-                depth=depth + 1,
+                group_hierarchy=group_hierarchy + [group_name],
                 is_parent_connected=node_conn,
                 is_parent_muted=node_muted,
             )
@@ -128,7 +131,7 @@ def check_bake_has_cache(bake_item):
 def get_object_bake_list(obj, scene=None, show_disconnected=True):
     """
     Return all modifiers and their bake nodes (connected in wiring order, disconnected at bottom)
-    with tree connectors and single action execution metadata.
+    with group encapsulation and execution metadata.
     """
     if not obj or not hasattr(obj, "modifiers"):
         return []
@@ -171,13 +174,13 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             return {
                 "name": item["name"],
                 "path": item["path"],
+                "group_name": item.get("group_name", ""),
                 "node_name": node.name if node else "",
                 "tree_name": item["tree"].name if item.get("tree") else "",
                 "bake_id": b_item.bake_id if b_item else 0,
                 "mode": mode,
                 "frame_info": frame_info,
                 "has_cache": has_cache,
-                "depth": item.get("depth", 0),
                 "is_connected": item.get("is_connected", True),
                 "is_muted": item.get("is_muted", False),
                 "is_simulation": item.get("is_simulation", False),
@@ -205,13 +208,13 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             disconnected_items.append({
                 "name": node_name,
                 "path": f"{node_name} (Unlinked)",
+                "group_name": "",
                 "node_name": node.name if node else "",
                 "tree_name": mod.node_group.name if mod.node_group else "",
                 "bake_id": b_item.bake_id,
                 "mode": mode,
                 "frame_info": frame_info,
                 "has_cache": has_cache,
-                "depth": 0,
                 "is_connected": False,
                 "is_muted": node.mute if node else False,
                 "is_simulation": getattr(node, "type", "") == 'SIMULATION_OUTPUT',
@@ -219,15 +222,6 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             })
 
         all_mod_bakes = connected_items + (disconnected_items if show_disconnected else [])
-
-        # Assign tree branch connector strings
-        for i, b in enumerate(all_mod_bakes):
-            is_last = (i == len(all_mod_bakes) - 1)
-            depth = b.get("depth", 0)
-            if depth == 0:
-                b["tree_connector"] = "└── " if is_last else "├── "
-            else:
-                b["tree_connector"] = ("│   " * (depth - 1)) + ("└── " if is_last else "├── ")
 
         if all_mod_bakes:
             modifiers_data.append({

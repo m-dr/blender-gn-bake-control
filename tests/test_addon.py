@@ -179,15 +179,16 @@ class TestGNBakeControl(unittest.TestCase):
         self.assertEqual(res, {'FINISHED'})
 
     def test_08_single_bake_and_clear_operators(self):
-        """Verify single bake and clear actions and tree connectors."""
+        """Verify single bake and clear actions and group containment."""
         obj = bpy.data.objects.get("ANIM")
         bpy.context.view_layer.objects.active = obj
 
         mod_data = traversal.get_object_bake_list(obj)
         bakes = mod_data[0]["bakes"]
 
-        # Check tree connector
-        self.assertTrue("├──" in bakes[0]["tree_connector"] or "└──" in bakes[0]["tree_connector"])
+        # Check group containment metadata
+        sim_bake = [b for b in bakes if b["name"] == "Simulation Output"][0]
+        self.assertEqual(sim_bake["group_name"], "G_Temporal Smooth Position")
 
         target_bake = bakes[0]
         # Test clear action

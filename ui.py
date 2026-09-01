@@ -53,9 +53,27 @@ def draw_gn_bake_ui(layout, context):
         op_mod_nav = head.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
         op_mod_nav.modifier_name = mod_name
 
-        # List each bake node
+        # Group and render bake items
+        current_group = None
+
         for b in bakes:
-            row = box.row(align=True)
+            group_name = b.get("group_name", "")
+
+            # If transitioning to a new group, draw a clean group sub-header
+            if group_name and group_name != current_group:
+                current_group = group_name
+                group_box = box.box()
+                grp_head = group_box.row(align=True)
+                grp_head.label(text=f"{group_name}", icon='NODETREE')
+                op_grp_nav = grp_head.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
+                op_grp_nav.modifier_name = mod_name
+                op_grp_nav.node_tree_name = b.get("tree_name", "")
+            elif not group_name:
+                current_group = None
+
+            # Render row inside group_box if nested, else directly in modifier box
+            target_container = group_box if group_name else box
+            row = target_container.row(align=True)
 
             is_conn = b.get("is_connected", True)
             is_muted = b.get("is_muted", False)
@@ -63,15 +81,11 @@ def draw_gn_bake_ui(layout, context):
             if not is_conn or is_muted:
                 row.active = False
 
-            # Proportional split: Left (Tree + Jump + Node Path), Right (Frame + Bake + Clear)
+            # Proportional split: Left (Status + Jump + Node), Right (Frame + Bake + Clear)
             split = row.split(factor=0.55, align=True)
 
-            # Left section: Tree connector + Status + Jump + Node Path
+            # Left section: Status + Jump + Node Name
             left = split.row(align=True)
-
-            # Tree branch connector
-            tree_conn = b.get("tree_connector", "├── ")
-            left.label(text=tree_conn)
 
             # Status icon
             icon = 'CHECKMARK' if b["has_cache"] else 'RADIOBUT_OFF'
@@ -86,9 +100,9 @@ def draw_gn_bake_ui(layout, context):
             else:
                 left.label(text="", icon='BLANK1')
 
-            # Node display name / path + Simulation / Type icon
+            # Node display name + Simulation / Type icon
             node_icon = 'AUTO' if b.get("is_simulation") else 'PHYSICS'
-            display_text = b["path"]
+            display_text = b["name"]
             if not is_conn:
                 display_text += " [Disc]"
             elif is_muted:
