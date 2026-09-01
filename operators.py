@@ -1,6 +1,6 @@
 import bpy
 from bpy.types import Operator
-from bpy.props import StringProperty
+from bpy.props import StringProperty, IntProperty, EnumProperty
 
 
 def find_group_chain(current_tree, target_tree, visited=None):
@@ -137,8 +137,62 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
         return {'FINISHED'}
 
 
+class OBJECT_OT_gn_bake_single_action(Operator):
+    bl_idname = "object.gn_bake_single_action"
+    bl_label = "GN Bake Single Action"
+    bl_description = "Bake or clear cache for a single Geometry Nodes bake node"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    action: EnumProperty(
+        name="Action",
+        items=[
+            ('BAKE', "Bake", "Bake this node"),
+            ('CLEAR', "Clear", "Clear cache for this node"),
+        ],
+        default='BAKE'
+    )
+    modifier_name: StringProperty(name="Modifier Name", default="")
+    bake_id: IntProperty(name="Bake ID", default=0)
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj:
+            self.report({'ERROR'}, "No active object selected.")
+            return {'CANCELLED'}
+
+        if not self.modifier_name or not self.bake_id:
+            self.report({'ERROR'}, "Invalid modifier or bake ID.")
+            return {'CANCELLED'}
+
+        mod = obj.modifiers.get(self.modifier_name)
+        if not mod or mod.type != 'NODES':
+            self.report({'ERROR'}, f"Modifier '{self.modifier_name}' not found.")
+            return {'CANCELLED'}
+
+        try:
+            if self.action == 'BAKE':
+                bpy.ops.object.geometry_node_bake_single(
+                    session_uid=obj.session_uid,
+                    modifier_name=self.modifier_name,
+                    bake_id=self.bake_id
+                )
+                self.report({'INFO'}, f"Baked node (ID {self.bake_id}) in {self.modifier_name}")
+            elif self.action == 'CLEAR':
+                bpy.ops.object.geometry_node_bake_delete_single(
+                    session_uid=obj.session_uid,
+                    modifier_name=self.modifier_name,
+                    bake_id=self.bake_id
+                )
+                self.report({'INFO'}, f"Cleared cache for node (ID {self.bake_id}) in {self.modifier_name}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Bake action failed: {e}")
+            return {'CANCELLED'}
+
+
 classes = (
     OBJECT_OT_gn_bake_navigate_to,
+    OBJECT_OT_gn_bake_single_action,
 )
 
 

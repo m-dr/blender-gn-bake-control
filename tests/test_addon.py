@@ -178,6 +178,34 @@ class TestGNBakeControl(unittest.TestCase):
         )
         self.assertEqual(res, {'FINISHED'})
 
+    def test_08_single_bake_and_clear_operators(self):
+        """Verify single bake and clear actions and tree connectors."""
+        obj = bpy.data.objects.get("ANIM")
+        bpy.context.view_layer.objects.active = obj
+
+        mod_data = traversal.get_object_bake_list(obj)
+        bakes = mod_data[0]["bakes"]
+
+        # Check tree connector
+        self.assertTrue("├──" in bakes[0]["tree_connector"] or "└──" in bakes[0]["tree_connector"])
+
+        target_bake = bakes[0]
+        # Test clear action
+        res_clear = bpy.ops.object.gn_bake_single_action(
+            action='CLEAR',
+            modifier_name=mod_data[0]["modifier_name"],
+            bake_id=target_bake["bake_id"]
+        )
+        self.assertEqual(res_clear, {'FINISHED'})
+
+        # Test bake action
+        res_bake = bpy.ops.object.gn_bake_single_action(
+            action='BAKE',
+            modifier_name=mod_data[0]["modifier_name"],
+            bake_id=target_bake["bake_id"]
+        )
+        self.assertEqual(res_bake, {'FINISHED'})
+
 
 if __name__ == "__main__":
     unittest.main(argv=['first-arg-is-ignored'], exit=False)

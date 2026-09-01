@@ -63,14 +63,21 @@ def draw_gn_bake_ui(layout, context):
             if not is_conn or is_muted:
                 row.active = False
 
-            # Proportional split: ~68% for node identifier, ~32% for right-aligned frame info
-            split = row.split(factor=0.68, align=True)
+            # Proportional split: Left (Tree + Jump + Node Path), Right (Frame + Bake + Clear)
+            split = row.split(factor=0.55, align=True)
 
-            # Left section: Status + Jump + Node Path
+            # Left section: Tree connector + Status + Jump + Node Path
             left = split.row(align=True)
+
+            # Tree branch connector
+            tree_conn = b.get("tree_connector", "├── ")
+            left.label(text=tree_conn)
+
+            # Status icon
             icon = 'CHECKMARK' if b["has_cache"] else 'RADIOBUT_OFF'
             left.label(text="", icon=icon)
 
+            # Compact right arrow navigate & frame node button
             if b.get("node_name"):
                 op_node_nav = left.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
                 op_node_nav.modifier_name = mod_name
@@ -79,6 +86,7 @@ def draw_gn_bake_ui(layout, context):
             else:
                 left.label(text="", icon='BLANK1')
 
+            # Node display name / path + Simulation / Type icon
             node_icon = 'AUTO' if b.get("is_simulation") else 'PHYSICS'
             display_text = b["path"]
             if not is_conn:
@@ -88,11 +96,28 @@ def draw_gn_bake_ui(layout, context):
 
             left.label(text=display_text, icon=node_icon)
 
-            # Right section: Right-aligned compact frame info
+            # Right section: Right-aligned Frame info + Action buttons
             right = split.row(align=True)
             right.alignment = 'RIGHT'
+
             frame_icon = 'IMAGE_DATA' if b["mode"] == 'STILL' else 'TIME'
             right.label(text=b["frame_info"], icon=frame_icon)
+
+            # Bake action button (Text)
+            bake_id = b.get("bake_id", 0)
+            if bake_id:
+                op_bake = right.operator("object.gn_bake_single_action", text="Bake")
+                op_bake.action = 'BAKE'
+                op_bake.modifier_name = mod_name
+                op_bake.bake_id = bake_id
+
+                # Clear cache action button (Trash can icon)
+                sub_clear = right.row(align=True)
+                sub_clear.enabled = b["has_cache"]
+                op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
+                op_clear.action = 'CLEAR'
+                op_clear.modifier_name = mod_name
+                op_clear.bake_id = bake_id
 
 
 class DATA_PT_gn_bake_control(Panel):
