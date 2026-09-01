@@ -2,6 +2,7 @@ import bpy
 from bpy.types import Panel
 
 from .traversal import get_object_bake_items
+from .properties import find_bake_setting
 from .preferences import get_preferences
 
 
@@ -80,7 +81,6 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
             setting = item.get("setting")
             node = item.get("node")
             has_cache = item.get("has_cache", False)
-            is_selected = setting.is_selected if setting else True
 
             if compact_ui:
                 # Compact Row
@@ -90,9 +90,7 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
                 if setting:
                     item_row.prop(setting, "is_selected", text="")
                 else:
-                    op_toggle = item_row.operator("object.gn_bake_toggle_item", text="", icon='CHECKBOX_HLT' if is_selected else 'CHECKBOX_DEHLT', emboss=False)
-                    op_toggle.modifier_name = mod_name
-                    op_toggle.bake_id = bake_item.bake_id
+                    item_row.label(text="", icon='CHECKBOX_HLT')
 
                 # Jump to node button
                 if item["node_tree"] and node:
@@ -111,14 +109,14 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
 
                 # Frame settings inline
                 if bake_item.bake_mode == 'STILL':
-                    if setting and setting.use_custom_still_frame:
+                    if setting:
                         item_row.prop(setting, "use_custom_still_frame", text="", icon='TIME')
-                        item_row.prop(setting, "custom_still_frame", text="")
-                    elif setting:
-                        item_row.prop(setting, "use_custom_still_frame", text="", icon='TIME')
-                        sub = item_row.row(align=True)
-                        sub.enabled = False
-                        sub.label(text=f"F:{context.scene.frame_current}")
+                        if setting.use_custom_still_frame:
+                            item_row.prop(setting, "custom_still_frame", text="")
+                        else:
+                            sub = item_row.row(align=True)
+                            sub.enabled = False
+                            sub.label(text=f"F:{context.scene.frame_current}")
                     else:
                         sub = item_row.row(align=True)
                         sub.enabled = False
@@ -156,9 +154,7 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
                 if setting:
                     top_r.prop(setting, "is_selected", text="")
                 else:
-                    op_toggle = top_r.operator("object.gn_bake_toggle_item", text="", icon='CHECKBOX_HLT' if is_selected else 'CHECKBOX_DEHLT', emboss=False)
-                    op_toggle.modifier_name = mod_name
-                    op_toggle.bake_id = bake_item.bake_id
+                    top_r.label(text="", icon='CHECKBOX_HLT')
 
                 if item["node_tree"] and node:
                     op_jump = top_r.operator("object.gn_bake_jump_to_node", text="", icon='TARGET')
