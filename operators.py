@@ -9,20 +9,19 @@ def find_group_chain(current_tree, target_tree, visited=None):
     """
     if not current_tree or not target_tree:
         return None
+    if current_tree == target_tree:
+        return []
     if visited is None:
         visited = set()
     if current_tree in visited:
         return None
-    visited.add(current_tree)
-
-    if current_tree == target_tree:
-        return []
+    visited = visited | {current_tree}
 
     for node in current_tree.nodes:
         if node.type == 'GROUP' and getattr(node, "node_tree", None):
             if node.node_tree == target_tree:
                 return [(node.node_tree, node)]
-            sub_chain = find_group_chain(node.node_tree, target_tree, visited)
+            sub_chain = find_group_chain(node.node_tree, target_tree, visited=visited)
             if sub_chain is not None:
                 return [(node.node_tree, node)] + sub_chain
     return None
@@ -67,21 +66,11 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
         if not root_tree and ntree:
             root_tree = ntree
 
-        if not root_tree:
+        if not root_tree and not ntree:
             self.report({'WARNING'}, "No node tree found to navigate to.")
             return {'CANCELLED'}
 
-        chain = []
-        try:
-            if self.group_chain_json:
-                chain = json.loads(self.group_chain_json)
-        except Exception:
-            chain = []
-
-        if not chain and ntree and ntree != root_tree:
-            chain_tuples = find_group_chain(root_tree, ntree)
-            if chain_tuples:
-                chain = [(t.name, n.name) for t, n in chain_tuples]
+        target_tree = ntree if ntree else root_tree
 
         # 3. Find and update all Node Editor spaces in active screen
         found_node_editor = False
@@ -99,38 +88,18 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
                         region_win = r
                         break
 
-                # Switch tree type and root node tree
+                # Unpin and point Node Editor directly to the target node tree
                 space.tree_type = 'GeometryNodeTree'
-                space.node_tree = root_tree
+                space.pin = False
+                space.node_tree = target_tree
 
-                # Build sub-group breadcrumb path
-                curr_tree = root_tree
-                for item in chain:
-                    if isinstance(item, (list, tuple)) and len(item) == 2:
-                        sub_tree_name, g_node_name = item
-                    elif isinstance(item, str):
-                        sub_tree_name, g_node_name = item, ""
-                    else:
-                        continue
-
-                    sub_tree = bpy.data.node_groups.get(sub_tree_name)
-                    g_node = curr_tree.nodes.get(g_node_name) if (curr_tree and g_node_name) else None
-                    if sub_tree:
-                        try:
-                            space.path.append(sub_tree, node=g_node)
-                            curr_tree = sub_tree
-                        except Exception:
-                            pass
-
-                active_tree = curr_tree if curr_tree else (ntree if ntree else root_tree)
-
-                if self.node_name and active_tree:
-                    target_node = active_tree.nodes.get(self.node_name)
+                if self.node_name and target_tree:
+                    target_node = target_tree.nodes.get(self.node_name)
                     if target_node:
-                        for n in active_tree.nodes:
+                        for n in target_tree.nodes:
                             n.select = False
                         target_node.select = True
-                        active_tree.nodes.active = target_node
+                        target_tree.nodes.active = target_node
 
                         area.tag_redraw()
 
@@ -148,12 +117,12 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
                             except Exception:
                                 pass
 
-                        self.report({'INFO'}, f"Framed '{target_node.name}' in '{active_tree.name}'")
+                        self.report({'INFO'}, f"Framed '{target_node.name}' in '{target_tree.name}'")
                         return {'FINISHED'}
 
                 area.tag_redraw()
 
-                # Frame all in node tree if navigating to modifier
+                # Frame all in node tree if navigating to modifier or whole tree
                 if not bpy.app.background and region_win:
                     try:
                         with context.temp_override(
@@ -167,7 +136,7 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
                     except Exception:
                         pass
 
-                self.report({'INFO'}, f"Navigated to '{root_tree.name}'")
+                self.report({'INFO'}, f"Navigated to '{target_tree.name}'")
                 return {'FINISHED'}
 
         if not found_node_editor:

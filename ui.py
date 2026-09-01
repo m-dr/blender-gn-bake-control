@@ -112,12 +112,10 @@ def draw_gn_bake_ui(layout, context):
 
             # 1. Group Folder Header Row (Hierarchical view only)
             if b.get("is_group"):
-                if is_selected:
-                    grp_box = box.box()
-                    grp_row = grp_box.row(align=True)
-                else:
-                    grp_row = box.row(align=True)
+                grp_row = box.row(align=True)
                 grp_row.scale_y = 0.85
+                if is_selected:
+                    grp_row.alert = True
 
                 if not is_conn or is_muted:
                     grp_row.active = False
@@ -150,12 +148,8 @@ def draw_gn_bake_ui(layout, context):
                     skip_below_depth = depth
                 continue
 
-            # 2. Node Item Row (Highlighted container if active in Node Editor)
-            if is_selected:
-                row_box = box.box()
-                row = row_box.row(align=True)
-            else:
-                row = box.row(align=True)
+            # 2. Node Item Row (Zero vertical shift highlight)
+            row = box.row(align=True)
             row.scale_y = 0.9
 
             if not is_conn:
@@ -163,6 +157,8 @@ def draw_gn_bake_ui(layout, context):
 
             # Proportional split: Left (Indentation + Status + Jump + Stage/Node), Right (Frame + Bake + Clear)
             split = row.split(factor=0.58, align=True)
+            if is_selected:
+                split.alert = True
 
             # Left section (dimmed visually if muted or disconnected)
             left = split.row(align=True)
