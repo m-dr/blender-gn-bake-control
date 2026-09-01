@@ -10,14 +10,8 @@ bl_info = {
 
 import importlib
 import sys
-
-if "bpy" in locals():
-    # Reload submodules when VS Code or Blender triggers reload
-    for mod in (preferences, properties, traversal, operators, ui):
-        if mod:
-            importlib.reload(mod)
-
 import bpy
+
 from . import preferences
 from . import properties
 from . import traversal
@@ -33,13 +27,26 @@ modules = (
 
 
 def register():
+    # Reload submodules if reloaded in-place
+    for mod in (preferences, properties, traversal, operators, ui):
+        try:
+            importlib.reload(mod)
+        except Exception:
+            pass
+
     for mod in modules:
-        mod.register()
+        try:
+            mod.register()
+        except Exception as e:
+            print(f"[GN Bake Control] Registration error in {mod.__name__}: {e}")
 
 
 def unregister():
     for mod in reversed(modules):
-        mod.unregister()
+        try:
+            mod.unregister()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
