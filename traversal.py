@@ -1,27 +1,24 @@
+import os
 import bpy
 
 
 def get_reachable_nodes_in_tree(node_tree):
     """
-    Find all active, unmuted nodes in a node tree that are connected
-    and can reach an unmuted GROUP_OUTPUT node.
+    Find all nodes in a node tree that have a valid link path leading to a GROUP_OUTPUT node.
     """
     if not node_tree:
         return set()
 
-    output_nodes = [n for n in node_tree.nodes if n.type == 'GROUP_OUTPUT' and not n.mute]
+    output_nodes = [n for n in node_tree.nodes if n.type == 'GROUP_OUTPUT']
     if not output_nodes:
-        # Fallback if no explicit group output node: all unmuted nodes
-        return set(n for n in node_tree.nodes if not n.mute)
+        # If no explicit group output, consider nodes with linked outputs as connected
+        return set(n for n in node_tree.nodes if len(n.outputs) > 0 and any(s.is_linked for s in n.outputs))
 
-    # Build upstream adjacency map: to_node -> list of from_nodes
     upstream_adj = {n: [] for n in node_tree.nodes}
     for link in node_tree.links:
         if link.is_valid:
-            if not link.from_node.mute and not link.to_node.mute:
-                upstream_adj[link.to_node].append(link.from_node)
+            upstream_adj[link.to_node].append(link.from_node)
 
-    # Backward BFS from unmuted outputs
     visited = set(output_nodes)
     queue = list(output_nodes)
     while queue:
@@ -34,12 +31,13 @@ def get_reachable_nodes_in_tree(node_tree):
     return visited
 
 
-def find_bake_nodes_in_tree(node_tree, prefix=""):
+def traverse_tree_bakes(node_tree, prefix="", is_parent_connected=True):
     """
-    Recursively find all connected, unmuted bake nodes in a node tree in topological execution order.
+    Recursively find all bake nodes and simulation outputs in a node tree.
+    Returns (connected_bakes, disconnected_bakes).
     """
     if not node_tree:
-        return []
+        return [], []
 
     reachable = get_reachable_nodes_in_tree(node_tree)
 
@@ -48,12 +46,10 @@ def find_bake_nodes_in_tree(node_tree, prefix=""):
 
     for link in node_tree.links:
         if link.is_valid and link.from_node in in_degree and link.to_node in in_degree:
-            # Only consider links between unmuted, reachable nodes
-            if not link.from_node.mute and not link.to_node.mute:
-                adj[link.from_node].append(link.to_node)
-                in_degree[link.to_node] += 1
+            adj[link.from_node].append(link.to_node)
+            in_degree[link.to_node] += 1
 
-    queue = [n for n, deg in in_degree.items() if deg == 0 and n in reachable and not n.mute]
+    queue = [n for n, deg in in_degree.items() if deg == 0]
     queue.sort(key=lambda n: (n.location.x, -n.location.y))
 
     ordered_nodes = []
@@ -62,39 +58,67 @@ def find_bake_nodes_in_tree(node_tree, prefix=""):
         ordered_nodes.append(curr)
         for neighbor in adj[curr]:
             in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0 and neighbor in reachable and not neighbor.mute:
+            if in_degree[neighbor] == 0:
                 queue.append(neighbor)
         queue.sort(key=lambda n: (n.location.x, -n.location.y))
 
-    # Append any reachable nodes not caught by cycle detection
     for n in node_tree.nodes:
-        if n in reachable and not n.mute and n not in ordered_nodes:
+        if n not in ordered_nodes:
             ordered_nodes.append(n)
 
-    results = []
-    for node in ordered_nodes:
-        if node.mute or node not in reachable:
-            continue
+    connected_bakes = []
+    disconnected_bakes = []
 
+    for node in ordered_nodes:
         name = node.label if node.label else node.name
-        if node.type == 'BAKE':
-            path = f"{prefix}{name}" if prefix else name
-            results.append({
+        path = f"{prefix}{name}" if prefix else name
+        node_conn = is_parent_connected and (node in reachable)
+
+        if node.type in ('BAKE', 'SIMULATION_OUTPUT'):
+            item = {
                 "name": name,
                 "path": path,
                 "node": node,
                 "tree": node_tree,
-            })
+                "is_connected": node_conn,
+                "is_muted": node.mute,
+                "is_simulation": node.type == 'SIMULATION_OUTPUT',
+            }
+            if node_conn:
+                connected_bakes.append(item)
+            else:
+                disconnected_bakes.append(item)
+
         elif node.type == 'GROUP' and getattr(node, "node_tree", None):
             sub_prefix = f"{prefix}{name} > " if prefix else f"{name} > "
-            results.extend(find_bake_nodes_in_tree(node.node_tree, prefix=sub_prefix))
+            sub_conn, sub_dis = traverse_tree_bakes(node.node_tree, prefix=sub_prefix, is_parent_connected=node_conn)
+            connected_bakes.extend(sub_conn)
+            disconnected_bakes.extend(sub_dis)
 
-    return results
+    return connected_bakes, disconnected_bakes
 
 
-def get_object_bake_list(obj, scene=None):
+def check_bake_has_cache(bake_item):
+    """Accurately check if a bake item has cached simulation or geometry data."""
+    if not bake_item:
+        return False
+    try:
+        # Check internal collection
+        if getattr(bake_item, "data_blocks", None) and len(bake_item.data_blocks) > 0:
+            return True
+        # Check disk directory
+        if getattr(bake_item, "bake_target", "") == 'DISK' and getattr(bake_item, "directory", ""):
+            cache_dir = bpy.path.abspath(bake_item.directory)
+            if os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def get_object_bake_list(obj, scene=None, show_disconnected=True):
     """
-    Return a clean list of modifiers and all their connected, active bake nodes with frame metadata.
+    Return all modifiers and their bake nodes (connected in wiring order, disconnected at bottom).
     """
     if not obj or not hasattr(obj, "modifiers"):
         return []
@@ -111,52 +135,52 @@ def get_object_bake_list(obj, scene=None):
         if mod.type != 'NODES' or not mod.node_group:
             continue
 
-        # Map nodes to modifier bakes collection
         bakes_collection = list(getattr(mod, "bakes", []))
         bake_by_node = {b.node: b for b in bakes_collection if getattr(b, "node", None)}
         unmapped_bakes = list(bakes_collection)
 
-        tree_bakes = find_bake_nodes_in_tree(mod.node_group)
-        mod_items = []
+        conn_tree_bakes, dis_tree_bakes = traverse_tree_bakes(mod.node_group)
 
-        for item in tree_bakes:
-            node = item["node"]
+        def build_bake_info(item):
+            node = item.get("node")
             b_item = bake_by_node.get(node)
-            if b_item:
-                if b_item in unmapped_bakes:
-                    unmapped_bakes.remove(b_item)
+            if b_item and b_item in unmapped_bakes:
+                unmapped_bakes.remove(b_item)
 
-                has_cache = bool(getattr(b_item, "data_blocks", None) and len(b_item.data_blocks) > 0)
-                mode = getattr(b_item, "bake_mode", "STILL")
+            has_cache = check_bake_has_cache(b_item)
+            mode = getattr(b_item, "bake_mode", "ANIMATION" if item.get("is_simulation") else "STILL")
 
-                if mode == 'STILL':
-                    frame_info = f"Still: Frame {scene_frame_current}"
+            if mode == 'STILL':
+                frame_info = f"Still: Frame {scene_frame_current}"
+            else:
+                if b_item and getattr(b_item, "use_custom_simulation_frame_range", False):
+                    frame_info = f"Range: {b_item.frame_start}..{b_item.frame_end} (Custom)"
                 else:
-                    if getattr(b_item, "use_custom_simulation_frame_range", False):
-                        frame_info = f"Range: {b_item.frame_start}..{b_item.frame_end} (Custom)"
-                    else:
-                        frame_info = f"Range: {scene_frame_start}..{scene_frame_end} (Scene)"
+                    frame_info = f"Range: {scene_frame_start}..{scene_frame_end} (Scene)"
 
-                mod_items.append({
-                    "name": item["name"],
-                    "path": item["path"],
-                    "node_name": node.name,
-                    "tree_name": item["tree"].name if item["tree"] else "",
-                    "bake_id": b_item.bake_id,
-                    "mode": mode,
-                    "frame_info": frame_info,
-                    "has_cache": has_cache,
-                    "bake_item": b_item,
-                })
+            return {
+                "name": item["name"],
+                "path": item["path"],
+                "node_name": node.name if node else "",
+                "tree_name": item["tree"].name if item.get("tree") else "",
+                "bake_id": b_item.bake_id if b_item else 0,
+                "mode": mode,
+                "frame_info": frame_info,
+                "has_cache": has_cache,
+                "is_connected": item.get("is_connected", True),
+                "is_muted": item.get("is_muted", False),
+                "is_simulation": item.get("is_simulation", False),
+                "bake_item": b_item,
+            }
 
-        # Include unmapped bakes (e.g. simulation zone outputs) if active
+        connected_items = [build_bake_info(it) for it in conn_tree_bakes]
+        disconnected_items = [build_bake_info(it) for it in dis_tree_bakes]
+
+        # Remaining unmapped bakes in mod.bakes (e.g. deleted or unlinked nodes)
         for b_item in unmapped_bakes:
             node = getattr(b_item, "node", None)
-            if node and node.mute:
-                continue
-
             node_name = node.label if (node and node.label) else (node.name if node else f"Bake #{b_item.bake_id}")
-            has_cache = bool(getattr(b_item, "data_blocks", None) and len(b_item.data_blocks) > 0)
+            has_cache = check_bake_has_cache(b_item)
             mode = getattr(b_item, "bake_mode", "STILL")
 
             if mode == 'STILL':
@@ -167,23 +191,30 @@ def get_object_bake_list(obj, scene=None):
                 else:
                     frame_info = f"Range: {scene_frame_start}..{scene_frame_end} (Scene)"
 
-            mod_items.append({
+            disconnected_items.append({
                 "name": node_name,
-                "path": node_name,
+                "path": f"{node_name} (Unlinked)",
                 "node_name": node.name if node else "",
                 "tree_name": mod.node_group.name if mod.node_group else "",
                 "bake_id": b_item.bake_id,
                 "mode": mode,
                 "frame_info": frame_info,
                 "has_cache": has_cache,
+                "is_connected": False,
+                "is_muted": node.mute if node else False,
+                "is_simulation": getattr(node, "type", "") == 'SIMULATION_OUTPUT',
                 "bake_item": b_item,
             })
 
-        if mod_items:
+        all_mod_bakes = connected_items + (disconnected_items if show_disconnected else [])
+
+        if all_mod_bakes:
             modifiers_data.append({
                 "modifier_name": mod.name,
                 "is_enabled": mod.show_viewport,
-                "bakes": mod_items,
+                "connected_count": len(connected_items),
+                "disconnected_count": len(disconnected_items),
+                "bakes": all_mod_bakes,
             })
 
     return modifiers_data

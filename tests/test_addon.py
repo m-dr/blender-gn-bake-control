@@ -66,9 +66,10 @@ class TestGNBakeControl(unittest.TestCase):
         self.assertTrue(hasattr(ui, "DATA_PT_gn_bake_control"))
         self.assertTrue(hasattr(ui, "VIEW3D_PT_gn_bake_control"))
         self.assertTrue(hasattr(bpy.ops.object, "gn_bake_navigate_to"))
+        self.assertTrue(hasattr(bpy.types.Object, "gn_bake_state"))
 
-    def test_02_traversal_and_frame_info(self):
-        """Verify active bake nodes listing and frame metadata."""
+    def test_02_simulation_and_group_encapsulation(self):
+        """Verify nested group bakes and simulation zone outputs are properly encapsulated."""
         test_blend_path = os.path.join(os.path.dirname(__file__), "batch_bake_test_file.blend")
         if not os.path.exists(test_blend_path):
             self.skipTest("Test blend file not found")
@@ -82,45 +83,52 @@ class TestGNBakeControl(unittest.TestCase):
         mod_data = traversal.get_object_bake_list(obj, scene=bpy.context.scene)
         self.assertEqual(len(mod_data), 2)
 
-        # Mod 1: GeometryNodes (4 bakes)
+        # Mod 1: GeometryNodes (4 bakes in exact execution order)
         mod1 = mod_data[0]
         self.assertEqual(mod1["modifier_name"], "GeometryNodes")
-        self.assertTrue(mod1["is_enabled"])
         self.assertEqual(len(mod1["bakes"]), 4)
-        self.assertEqual(mod1["bakes"][0]["name"], "Bake.001")
-        self.assertTrue("Still" in mod1["bakes"][0]["frame_info"])
-        self.assertEqual(mod1["bakes"][2]["name"], "Bake.002")
-        self.assertTrue("Range" in mod1["bakes"][2]["frame_info"])
 
-        # Mod 2: GeometryNodes.001 (2 bakes)
-        mod2 = mod_data[1]
-        self.assertEqual(mod2["modifier_name"], "GeometryNodes.001")
-        self.assertEqual(len(mod2["bakes"]), 2)
-        self.assertEqual(mod2["bakes"][1]["path"], "Bake.001 > Bake.001")
+        paths = [b["path"] for b in mod1["bakes"]]
+        self.assertIn("G_Temporal Smooth Position > Simulation Output", paths)
+        self.assertEqual(paths[0], "Bake.001")
+        self.assertEqual(paths[1], "Bake")
+        self.assertEqual(paths[2], "G_Temporal Smooth Position > Simulation Output")
+        self.assertEqual(paths[3], "Bake.002")
 
-    def test_03_disabled_modifier_status(self):
-        """Verify disabled modifier status is properly tracked."""
+        # Cache check: Bake.001 and Bake have disk cache
+        self.assertTrue(mod1["bakes"][0]["has_cache"])
+        self.assertTrue(mod1["bakes"][1]["has_cache"])
+
+    def test_03_disconnected_node_handling(self):
+        """Verify disconnected nodes are flagged and appended at the bottom."""
         obj = bpy.data.objects.get("ANIM")
         mod_gn = obj.modifiers["GeometryNodes"]
-        mod_gn.show_viewport = False
+        bake_node = mod_gn.node_group.nodes["Bake.001"]
 
-        mod_data = traversal.get_object_bake_list(obj)
-        self.assertFalse(mod_data[0]["is_enabled"])
+        # Disconnect all links from Bake.001
+        for l in list(mod_gn.node_group.links):
+            if l.to_node == bake_node or l.from_node == bake_node:
+                mod_gn.node_group.links.remove(l)
 
-        mod_gn.show_viewport = True
-        mod_data = traversal.get_object_bake_list(obj)
-        self.assertTrue(mod_data[0]["is_enabled"])
+        mod_data = traversal.get_object_bake_list(obj, show_disconnected=True)
+        mod1 = mod_data[0]
+        self.assertEqual(mod1["connected_count"], 3)
+        self.assertEqual(mod1["disconnected_count"], 1)
 
-    def test_04_navigation_operator(self):
-        """Verify navigation operator focusing modifier and nested bake nodes."""
+        # Last item should be the disconnected Bake.001
+        last_bake = mod1["bakes"][-1]
+        self.assertEqual(last_bake["name"], "Bake.001")
+        self.assertFalse(last_bake["is_connected"])
+
+    def test_04_navigation_and_framing(self):
+        """Verify navigation operator focusing and framing nodes."""
         obj = bpy.data.objects.get("ANIM")
         bpy.context.view_layer.objects.active = obj
 
-        # Navigate to nested node Bake.001 in Bake Group
         res = bpy.ops.object.gn_bake_navigate_to(
-            modifier_name="GeometryNodes.001",
-            node_tree_name="Bake Group",
-            node_name="Bake.001"
+            modifier_name="GeometryNodes",
+            node_tree_name="G_Temporal Smooth Position",
+            node_name="Simulation Output"
         )
         self.assertEqual(res, {'FINISHED'})
 

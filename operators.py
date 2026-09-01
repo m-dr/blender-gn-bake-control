@@ -6,7 +6,7 @@ from bpy.props import StringProperty
 class OBJECT_OT_gn_bake_navigate_to(Operator):
     bl_idname = "object.gn_bake_navigate_to"
     bl_label = "Navigate to Node"
-    bl_description = "Focus and navigate to this modifier or bake node in the Node Editor"
+    bl_description = "Focus, navigate to, and frame this modifier or bake node in the Geometry Node Editor"
     bl_options = {'REGISTER', 'UNDO'}
 
     modifier_name: StringProperty(name="Modifier Name", default="")
@@ -36,20 +36,32 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
             if mod and mod.type == 'NODES':
                 ntree = mod.node_group
 
-        # 3. Find Node Editor space in active screen
-        node_space = None
+        # 3. Find Node Editor space, area, and window region in active screen
+        target_space = None
+        target_area = None
+        target_region = None
+
         for area in context.screen.areas:
             if area.type == 'NODE_EDITOR':
+                target_area = area
                 for space in area.spaces:
                     if space.type == 'NODE_EDITOR':
-                        node_space = space
+                        target_space = space
                         break
-                if node_space:
+                for region in area.regions:
+                    if region.type == 'WINDOW':
+                        target_region = region
+                        break
+                if target_space:
                     break
 
-        if node_space and ntree:
-            node_space.tree_type = 'GeometryNodeTree'
-            node_space.node_tree = ntree
+        if not target_space:
+            self.report({'WARNING'}, "No Geometry Node Editor is open on screen.")
+            return {'CANCELLED'}
+
+        if ntree:
+            target_space.tree_type = 'GeometryNodeTree'
+            target_space.node_tree = ntree
 
             if self.node_name:
                 target_node = ntree.nodes.get(self.node_name)
@@ -58,15 +70,28 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
                         n.select = False
                     target_node.select = True
                     ntree.nodes.active = target_node
-                    self.report({'INFO'}, f"Selected '{target_node.name}' in '{ntree.name}'")
+
+                    # Focus view (Numpad .) onto the selected node
+                    if not bpy.app.background and target_area and target_region:
+                        with context.temp_override(area=target_area, region=target_region, space_data=target_space):
+                            try:
+                                bpy.ops.node.view_selected()
+                            except Exception:
+                                pass
+
+                    self.report({'INFO'}, f"Framed '{target_node.name}' in '{ntree.name}'")
                     return {'FINISHED'}
+
+            # Frame all in node tree if only navigating to modifier
+            if not bpy.app.background and target_area and target_region:
+                with context.temp_override(area=target_area, region=target_region, space_data=target_space):
+                    try:
+                        bpy.ops.node.view_all()
+                    except Exception:
+                        pass
 
             self.report({'INFO'}, f"Navigated to '{ntree.name}'")
             return {'FINISHED'}
-
-        if not node_space:
-            self.report({'WARNING'}, "No Geometry Node Editor is open on screen.")
-            return {'CANCELLED'}
 
         return {'FINISHED'}
 
