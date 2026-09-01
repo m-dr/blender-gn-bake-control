@@ -15,14 +15,13 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
     state = getattr(obj, "gn_bake_state", None)
     filter_text = state.filter_text if state else ""
     missing_only = state.show_missing_only if state else False
-    compact_ui = state.compact_ui if state else True
 
     items = get_object_bake_items(obj, filter_text=filter_text, missing_only=missing_only)
 
     # 1. Global Batch Actions Toolbar
     col_top = layout.column(align=True)
     row_batch = col_top.row(align=True)
-    row_batch.scale_y = 1.25
+    row_batch.scale_y = 1.2
 
     op_bake = row_batch.operator("object.gn_bake_batch", text="Bake Selected", icon='PHYSICS')
     op_bake.mode = 'BAKE'
@@ -44,10 +43,7 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
     op_inv.action = 'INVERT'
 
     if state:
-        row_tools.prop(state, "compact_ui", text="", icon='COLLAPSEMENU' if state.compact_ui else 'MENU_PANEL')
         row_tools.prop(state, "show_missing_only", text="", icon='HIDE_ON' if state.show_missing_only else 'HIDE_OFF')
-
-    if state:
         row_filter = layout.row(align=True)
         row_filter.prop(state, "filter_text", text="", icon='VIEWZOOM', placeholder="Filter bake nodes...")
 
@@ -69,7 +65,7 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
 
     layout.separator(factor=0.5)
 
-    # 4. Draw items per modifier
+    # 4. Clean & focused listing of bake nodes per modifier
     for mod_name, mod_items in items_by_mod.items():
         mod_box = layout.box()
         header_row = mod_box.row(align=True)
@@ -82,113 +78,33 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
             node = item.get("node")
             has_cache = item.get("has_cache", False)
 
-            if compact_ui:
-                # Compact Row
-                item_row = mod_box.row(align=True)
+            row = mod_box.row(align=True)
 
-                # Selection checkbox
-                if setting:
-                    item_row.prop(setting, "is_selected", text="")
-                else:
-                    item_row.label(text="", icon='CHECKBOX_HLT')
-
-                # Jump to node button
-                if item["node_tree"] and node:
-                    op_jump = item_row.operator("object.gn_bake_jump_to_node", text="", icon='TARGET')
-                    op_jump.node_tree_name = item["node_tree"].name
-                    op_jump.node_name = node.name
-
-                # Node Label / Path
-                display_label = item["display_name"]
-                if len(display_label) > 18:
-                    display_label = display_label[:16] + ".."
-                item_row.label(text=display_label)
-
-                # Mode selector
-                item_row.prop(bake_item, "bake_mode", text="")
-
-                # Frame settings inline
-                if bake_item.bake_mode == 'STILL':
-                    if setting:
-                        item_row.prop(setting, "use_custom_still_frame", text="", icon='TIME')
-                        if setting.use_custom_still_frame:
-                            item_row.prop(setting, "custom_still_frame", text="")
-                        else:
-                            sub = item_row.row(align=True)
-                            sub.enabled = False
-                            sub.label(text=f"F:{context.scene.frame_current}")
-                    else:
-                        sub = item_row.row(align=True)
-                        sub.enabled = False
-                        sub.label(text=f"F:{context.scene.frame_current}")
-                else: # ANIMATION
-                    item_row.prop(bake_item, "use_custom_simulation_frame_range", text="", icon='TIME')
-                    if bake_item.use_custom_simulation_frame_range:
-                        item_row.prop(bake_item, "frame_start", text="")
-                        item_row.prop(bake_item, "frame_end", text="")
-                    else:
-                        sub = item_row.row(align=True)
-                        sub.enabled = False
-                        sub.label(text=f"{context.scene.frame_start}..{context.scene.frame_end}")
-
-                # Status indicator
-                stat_icon = 'CHECKMARK' if has_cache else 'RADIOBUT_OFF'
-                item_row.label(text="", icon=stat_icon)
-
-                # Action buttons
-                op_single_bake = item_row.operator("object.gn_bake_single_action", text="", icon='PHYSICS')
-                op_single_bake.action = 'BAKE'
-                op_single_bake.modifier_name = mod_name
-                op_single_bake.bake_id = bake_item.bake_id
-
-                op_single_clean = item_row.operator("object.gn_bake_single_action", text="", icon='X')
-                op_single_clean.action = 'CLEAN'
-                op_single_clean.modifier_name = mod_name
-                op_single_clean.bake_id = bake_item.bake_id
-
+            # 1. Selection checkbox
+            if setting:
+                row.prop(setting, "is_selected", text="")
             else:
-                # Detailed Card View
-                card = mod_box.box()
-                top_r = card.row(align=True)
+                row.label(text="", icon='CHECKBOX_HLT')
 
-                if setting:
-                    top_r.prop(setting, "is_selected", text="")
-                else:
-                    top_r.label(text="", icon='CHECKBOX_HLT')
+            # 2. Jump to node button
+            if item.get("node_tree") and node:
+                op_jump = row.operator("object.gn_bake_jump_to_node", text="", icon='TARGET')
+                op_jump.node_tree_name = item["node_tree"].name
+                op_jump.node_name = node.name
+            else:
+                row.label(text="", icon='BLANK1')
 
-                if item["node_tree"] and node:
-                    op_jump = top_r.operator("object.gn_bake_jump_to_node", text="", icon='TARGET')
-                    op_jump.node_tree_name = item["node_tree"].name
-                    op_jump.node_name = node.name
+            # 3. Bake Node Label / Group Path
+            display_name = item.get("display_name", "Bake Node")
+            row.label(text=display_name, icon='PINNED' if has_cache else 'UNPINNED')
 
-                top_r.label(text=item["display_name"], icon='PINNED' if has_cache else 'UNPINNED')
+            # 4. Mode badge (STILL / ANIMATION)
+            mode_text = getattr(bake_item, "bake_mode", "STILL")
+            row.label(text=mode_text)
 
-                # Right side action buttons
-                op_sb = top_r.operator("object.gn_bake_single_action", text="Bake", icon='PHYSICS')
-                op_sb.action = 'BAKE'
-                op_sb.modifier_name = mod_name
-                op_sb.bake_id = bake_item.bake_id
-
-                op_sc = top_r.operator("object.gn_bake_single_action", text="Clean", icon='X')
-                op_sc.action = 'CLEAN'
-                op_sc.modifier_name = mod_name
-                op_sc.bake_id = bake_item.bake_id
-
-                # Controls row
-                ctrl_row = card.row(align=True)
-                ctrl_row.prop(bake_item, "bake_mode", text="Mode")
-
-                if bake_item.bake_mode == 'STILL':
-                    if setting:
-                        ctrl_row.prop(setting, "use_custom_still_frame", text="Custom Frame")
-                        if setting.use_custom_still_frame:
-                            ctrl_row.prop(setting, "custom_still_frame", text="Frame")
-                else:
-                    ctrl_row.prop(bake_item, "use_custom_simulation_frame_range", text="Custom Range")
-                    if bake_item.use_custom_simulation_frame_range:
-                        range_row = card.row(align=True)
-                        range_row.prop(bake_item, "frame_start", text="Start")
-                        range_row.prop(bake_item, "frame_end", text="End")
+            # 5. Status indicator
+            stat_icon = 'CHECKMARK' if has_cache else 'RADIOBUT_OFF'
+            row.label(text="", icon=stat_icon)
 
 
 class DATA_PT_gn_bake_control(Panel):
