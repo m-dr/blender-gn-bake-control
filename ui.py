@@ -184,7 +184,7 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
 
 class DATA_PT_gn_bake_control(Panel):
     bl_idname = "DATA_PT_gn_bake_control"
-    bl_label = "GN Bake Control"
+    bl_label = "GN Bake Control (DEV)"
     bl_space_type = 'PROPERTIES'
     bl_region_type = 'WINDOW'
     bl_context = "modifier"
@@ -203,10 +203,10 @@ class DATA_PT_gn_bake_control(Panel):
 
 class VIEW3D_PT_gn_bake_control(Panel):
     bl_idname = "VIEW3D_PT_gn_bake_control"
-    bl_label = "GN Bake Control"
+    bl_label = "GN Bake Control (DEV)"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "GN Bake"
+    bl_category = "GN Bake (DEV)"
 
     @classmethod
     def poll(cls, context):
