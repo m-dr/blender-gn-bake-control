@@ -221,7 +221,8 @@ def compute_tree_bake_stages(
 
 def check_bake_cache_info(obj, mod, bake_item, timestamps_dict=None):
     """
-    Accurately check cache presence and modification timestamp.
+    Accurately check cache presence and modification timestamp across
+    both UI-triggered bakes and native Node Editor bakes.
     Returns (has_cache: bool, timestamp: float).
     """
     if not bake_item:
@@ -234,32 +235,43 @@ def check_bake_cache_info(obj, mod, bake_item, timestamps_dict=None):
     if getattr(bake_item, "data_blocks", None) and len(bake_item.data_blocks) > 0:
         return True, recorded_ts if recorded_ts > 0 else 1.0
 
-    # 2. Check disk directory
+    # 2. Check explicit disk directory
     dir_path = getattr(bake_item, "directory", "")
-    candidate_dirs = []
-
     if dir_path:
-        candidate_dirs.append(bpy.path.abspath(dir_path))
+        abs_p = bpy.path.abspath(dir_path)
+        if os.path.exists(abs_p):
+            mtimes = []
+            for root, _, files in os.walk(abs_p):
+                for f in files:
+                    try:
+                        mtimes.append(os.path.getmtime(os.path.join(root, f)))
+                    except Exception:
+                        pass
+            if mtimes:
+                return True, max(max(mtimes), recorded_ts)
 
-    # Also check default blendcache directories
+    # 3. Bi-directional scan for native Blender blendcache directory
     if bpy.data.filepath:
         blend_dir = os.path.dirname(bpy.data.filepath)
-        blend_name = os.path.splitext(os.path.basename(bpy.data.filepath))[0]
-        cache_root = os.path.join(blend_dir, f"blendcache_{blend_name}")
-        candidate_dirs.append(os.path.join(cache_root, f"{obj.name}_{mod.name}", str(bake_item.bake_id)))
-        candidate_dirs.append(os.path.join(cache_root, str(bake_item.bake_id)))
-
-    for c_dir in candidate_dirs:
-        try:
-            if os.path.exists(c_dir):
-                files = [os.path.join(c_dir, f) for f in os.listdir(c_dir)]
-                if files:
-                    mtimes = [os.path.getmtime(f) for f in files if os.path.isfile(f)]
-                    disk_ts = max(mtimes) if mtimes else os.path.getmtime(c_dir)
-                    effective_ts = max(disk_ts, recorded_ts)
-                    return True, effective_ts
-        except Exception:
-            pass
+        if blend_dir and os.path.exists(blend_dir):
+            try:
+                for entry in os.listdir(blend_dir):
+                    if entry.startswith("blendcache_"):
+                        cache_root = os.path.join(blend_dir, entry)
+                        if os.path.isdir(cache_root):
+                            for dirpath, _, filenames in os.walk(cache_root):
+                                if os.path.basename(dirpath) == str(bake_item.bake_id):
+                                    mtimes = []
+                                    for sub_root, _, sub_files in os.walk(dirpath):
+                                        for sf in sub_files:
+                                            try:
+                                                mtimes.append(os.path.getmtime(os.path.join(sub_root, sf)))
+                                            except Exception:
+                                                pass
+                                    if mtimes:
+                                        return True, max(max(mtimes), recorded_ts)
+            except Exception:
+                pass
 
     if recorded_ts > 0:
         return True, recorded_ts

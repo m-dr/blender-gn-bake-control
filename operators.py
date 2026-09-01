@@ -189,11 +189,27 @@ class OBJECT_OT_gn_bake_single_action(Operator):
         try:
             state = getattr(obj, "gn_bake_state", None)
             if self.action == 'BAKE':
-                bpy.ops.object.geometry_node_bake_single(
-                    session_uid=obj.session_uid,
-                    modifier_name=self.modifier_name,
-                    bake_id=self.bake_id
-                )
+                try:
+                    if not bpy.app.background:
+                        bpy.ops.object.geometry_node_bake_single(
+                            'INVOKE_DEFAULT',
+                            session_uid=obj.session_uid,
+                            modifier_name=self.modifier_name,
+                            bake_id=self.bake_id
+                        )
+                    else:
+                        bpy.ops.object.geometry_node_bake_single(
+                            session_uid=obj.session_uid,
+                            modifier_name=self.modifier_name,
+                            bake_id=self.bake_id
+                        )
+                except Exception:
+                    bpy.ops.object.geometry_node_bake_single(
+                        session_uid=obj.session_uid,
+                        modifier_name=self.modifier_name,
+                        bake_id=self.bake_id
+                    )
+
                 if state:
                     state.set_bake_timestamp(self.modifier_name, self.bake_id)
                 self.report({'INFO'}, f"Baked node (ID {self.bake_id}) in {self.modifier_name}")
