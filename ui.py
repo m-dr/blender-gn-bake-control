@@ -13,6 +13,7 @@ def draw_gn_bake_ui(layout, context):
 
     state = getattr(obj, "gn_bake_state", None)
     show_disconnected = state.show_disconnected if state else True
+    collapsed_groups = set(state.collapsed_groups.split(";")) if (state and state.collapsed_groups) else set()
 
     mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=show_disconnected)
 
@@ -53,23 +54,47 @@ def draw_gn_bake_ui(layout, context):
         op_mod_nav = head.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
         op_mod_nav.modifier_name = mod_name
 
-        # Outliner-style continuous hierarchical tree
+        # Track collapsed group hierarchy depth
+        skip_below_depth = None
+
+        # Outliner-style continuous hierarchical tree with vertical guide lines & disclosure collapse
         for b in bakes:
             depth = b.get("depth", 0)
             is_conn = b.get("is_connected", True)
             is_muted = b.get("is_muted", False)
+
+            # Skip children of collapsed groups
+            if skip_below_depth is not None:
+                if depth > skip_below_depth:
+                    continue
+                else:
+                    skip_below_depth = None
+
+            group_key = f"{b.get('group_name', '')}::{b.get('name')}"
+            full_key = f"{mod_name}::{group_key}"
+            is_collapsed = full_key in collapsed_groups
 
             # 1. Group Folder Header Row
             if b.get("is_group"):
                 grp_row = box.row(align=True)
                 grp_row.scale_y = 0.85
 
-                if not is_conn:
+                if not is_conn or is_muted:
                     grp_row.active = False
 
-                # Indentation for nesting depth
+                # Vertical tree guide lines for nesting depth
                 for _ in range(depth):
-                    grp_row.label(text="", icon='BLANK1')
+                    grp_row.label(text="│")
+
+                # Expand / Collapse disclosure triangle button
+                op_toggle = grp_row.operator(
+                    "object.gn_bake_toggle_group",
+                    text="",
+                    icon='DISCLOSURE_TRI_RIGHT' if is_collapsed else 'DISCLOSURE_TRI_DOWN',
+                    emboss=False
+                )
+                op_toggle.modifier_name = mod_name
+                op_toggle.group_key = group_key
 
                 grp_icon = 'RESTRICT_VIEW_ON' if is_muted else 'NODETREE'
                 grp_label = f"[{b['num_tag']}]  {b['name']}" + (" [Muted]" if is_muted else "")
@@ -79,6 +104,9 @@ def draw_gn_bake_ui(layout, context):
                 op_grp_nav.modifier_name = mod_name
                 op_grp_nav.node_tree_name = b.get("tree_name", "")
                 op_grp_nav.node_name = b.get("node_name", "")
+
+                if is_collapsed:
+                    skip_below_depth = depth
                 continue
 
             # 2. Node Item Row
@@ -91,12 +119,14 @@ def draw_gn_bake_ui(layout, context):
             # Proportional split: Left (Indentation + Status + Jump + Stage/Node), Right (Frame + Bake + Clear)
             split = row.split(factor=0.58, align=True)
 
-            # Left section
+            # Left section (dimmed visually if muted or disconnected)
             left = split.row(align=True)
+            if is_muted or not is_conn:
+                left.active = False
 
-            # Indentation for multi-level nesting
+            # Vertical tree guide lines for multi-level nesting
             for _ in range(depth):
-                left.label(text="", icon='BLANK1')
+                left.label(text="│")
 
             # Cache status indicator
             icon = 'CHECKMARK' if b["has_cache"] else 'RADIOBUT_OFF'
@@ -128,9 +158,10 @@ def draw_gn_bake_ui(layout, context):
 
             left.label(text=display_text, icon=node_icon)
 
-            # Right section: Right-aligned Frame info + Action buttons
+            # Right section: Right-aligned Frame info + Action buttons (Active & functional)
             right = split.row(align=True)
             right.alignment = 'RIGHT'
+            right.active = True
 
             frame_icon = 'IMAGE_DATA' if b["mode"] == 'STILL' else 'TIME'
             right.label(text=b["frame_info"], icon=frame_icon)

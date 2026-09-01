@@ -207,9 +207,37 @@ class OBJECT_OT_gn_bake_single_action(Operator):
             return {'CANCELLED'}
 
 
+class OBJECT_OT_gn_bake_toggle_group(Operator):
+    bl_idname = "object.gn_bake_toggle_group"
+    bl_label = "Toggle Group Collapse"
+    bl_description = "Expand or collapse this group hierarchy"
+    bl_options = {'INTERNAL'}
+
+    modifier_name: StringProperty(name="Modifier Name", default="")
+    group_key: StringProperty(name="Group Key", default="")
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj:
+            return {'CANCELLED'}
+        state = getattr(obj, "gn_bake_state", None)
+        if not state:
+            return {'CANCELLED'}
+
+        collapsed = set(state.collapsed_groups.split(";")) if state.collapsed_groups else set()
+        key = f"{self.modifier_name}::{self.group_key}"
+        if key in collapsed:
+            collapsed.remove(key)
+        else:
+            collapsed.add(key)
+        state.collapsed_groups = ";".join(filter(None, collapsed))
+        return {'FINISHED'}
+
+
 classes = (
     OBJECT_OT_gn_bake_navigate_to,
     OBJECT_OT_gn_bake_single_action,
+    OBJECT_OT_gn_bake_toggle_group,
 )
 
 

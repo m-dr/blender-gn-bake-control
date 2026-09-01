@@ -1,13 +1,18 @@
 import bpy
 from bpy.types import PropertyGroup
-from bpy.props import BoolProperty, PointerProperty
+from bpy.props import BoolProperty, StringProperty, PointerProperty
 
 
 class GNBakeObjectState(PropertyGroup):
     show_disconnected: BoolProperty(
-        name="Show Disconnected",
-        description="Show disconnected or unused bake nodes at the bottom of the list",
+        name="Show Disconnected & Muted",
+        description="Show disconnected or muted bake nodes in the list",
         default=True,
+    )
+    collapsed_groups: StringProperty(
+        name="Collapsed Groups",
+        description="Semicolon-separated list of collapsed group keys",
+        default="",
     )
 
 

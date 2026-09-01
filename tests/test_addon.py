@@ -47,7 +47,7 @@ class DummyLayout:
     def prop(self, data, prop_name, text="", icon='NONE', icon_only=False, placeholder=""):
         pass
 
-    def operator(self, op_idname, text="", icon='NONE'):
+    def operator(self, op_idname, text="", icon='NONE', **kwargs):
         return DummyOperator()
 
     def separator(self, factor=1.0):
@@ -61,6 +61,7 @@ class DummyOperator:
         self.node_tree_name = ""
         self.node_name = ""
         self.bake_id = 0
+        self.group_key = ""
 
 
 class TestGNBakeControl(unittest.TestCase):
@@ -244,6 +245,31 @@ class TestGNBakeControl(unittest.TestCase):
         )
         self.assertEqual(res_bake, {'FINISHED'})
 
+    def test_09_group_collapse_toggle(self):
+        """Verify expanding and collapsing group hierarchies."""
+        obj = bpy.data.objects.get("ANIM")
+        bpy.context.view_layer.objects.active = obj
+
+        state = obj.gn_bake_state
+        self.assertEqual(state.collapsed_groups, "")
+
+        # Collapse group
+        res = bpy.ops.object.gn_bake_toggle_group(
+            modifier_name="GeometryNodes",
+            group_key="::G_Temporal Smooth Position"
+        )
+        self.assertEqual(res, {'FINISHED'})
+        self.assertIn("GeometryNodes::::G_Temporal Smooth Position", state.collapsed_groups)
+
+        # Expand group
+        res = bpy.ops.object.gn_bake_toggle_group(
+            modifier_name="GeometryNodes",
+            group_key="::G_Temporal Smooth Position"
+        )
+        self.assertEqual(res, {'FINISHED'})
+        self.assertNotIn("GeometryNodes::::G_Temporal Smooth Position", state.collapsed_groups)
+
 
 if __name__ == "__main__":
     unittest.main(argv=['first-arg-is-ignored'], exit=False)
+
