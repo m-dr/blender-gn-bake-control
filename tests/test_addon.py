@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import unittest
 import importlib.util
 
@@ -281,6 +282,35 @@ class TestGNBakeControl(unittest.TestCase):
         dummy_layout = DummyLayout()
         ui.draw_gn_bake_ui(dummy_layout, bpy.context)
         state.flatten_hierarchy = False
+
+    def test_11_stale_downstream_invalidation(self):
+        """Verify downstream bakes are marked STALE when upstream bake is newer."""
+        obj = bpy.data.objects.get("ANIM")
+        bpy.context.view_layer.objects.active = obj
+        state = obj.gn_bake_state
+
+        # Set upstream Bake.001 (ID 74436161) to timestamp 200, downstream Bake.002 (ID 1651669316) to timestamp 100
+        state.set_bake_timestamp("GeometryNodes", 74436161, timestamp=200.0)
+        state.set_bake_timestamp("GeometryNodes", 1651669316, timestamp=100.0)
+
+        mod_data = traversal.get_object_bake_list(obj)
+        bakes = mod_data[0]["bakes"]
+
+        b_upstream = [b for b in bakes if b["name"] == "Bake.001" and not b.get("is_group")][0]
+        b_downstream = [b for b in bakes if b["name"] == "Bake.002" and not b.get("is_group")][0]
+
+        self.assertEqual(b_upstream["cache_state"], 'BAKED')
+        self.assertEqual(b_upstream["status_icon"], 'CHECKMARK')
+
+        self.assertEqual(b_downstream["cache_state"], 'STALE')
+        self.assertEqual(b_downstream["status_icon"], 'FILE_REFRESH')
+
+        # When downstream Bake.002 is rebaked with latest timestamp, it becomes BAKED again
+        state.set_bake_timestamp("GeometryNodes", 1651669316, timestamp=time.time() + 1000.0)
+        mod_data2 = traversal.get_object_bake_list(obj)
+        b_downstream2 = [b for b in mod_data2[0]["bakes"] if b["name"] == "Bake.002" and not b.get("is_group")][0]
+        self.assertEqual(b_downstream2["cache_state"], 'BAKED')
+        self.assertEqual(b_downstream2["status_icon"], 'CHECKMARK')
 
 
 if __name__ == "__main__":

@@ -52,7 +52,7 @@ def node_tree_has_bakes(node_tree, visited=None):
 
 def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent_connected=True, is_parent_muted=False):
     """
-    Compute DAG longest-path topological execution stages and clean local hierarchical number tags (e.g. 1.1, 1.2, 2, 3).
+    Compute DAG longest-path topological execution stages, clean local number tags, and upstream dependencies.
     Returns (connected_items, disconnected_items).
     """
     if not node_tree:
@@ -98,8 +98,10 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
         elif n.type == 'GROUP' and getattr(n, "node_tree", None) and node_tree_has_bakes(n.node_tree):
             interesting_nodes.append(n)
 
-    # Compute longest path stage from preceding interesting nodes
+    # Compute longest path stage & upstream dependency closure
     stages = {}
+    upstream_dependencies = defaultdict(set)
+
     for n in interesting_nodes:
         max_prev_stage = 0
         visited_up = set()
@@ -109,8 +111,10 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
             if u in visited_up:
                 continue
             visited_up.add(u)
-            if u in stages and stages[u] > max_prev_stage:
-                max_prev_stage = stages[u]
+            if u in stages:
+                upstream_dependencies[n].add(u)
+                if stages[u] > max_prev_stage:
+                    max_prev_stage = stages[u]
             for prev_u in upstream_adj[u]:
                 if prev_u in reachable and prev_u not in visited_up:
                     up_q.append(prev_u)
@@ -145,6 +149,7 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
                     "is_connected": is_parent_connected,
                     "is_muted": node_muted,
                     "is_simulation": node.type == 'SIMULATION_OUTPUT',
+                    "upstream_nodes": list(upstream_dependencies[node]),
                 })
             elif node.type == 'GROUP' and getattr(node, "node_tree", None):
                 group_name = node.label if node.label else node.node_tree.name
@@ -167,6 +172,7 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
                     "is_connected": is_parent_connected,
                     "is_muted": node_muted,
                     "is_simulation": False,
+                    "upstream_nodes": list(upstream_dependencies[node]),
                     "children": sub_conn,
                 })
 
@@ -192,33 +198,77 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
             "is_connected": False,
             "is_muted": dn.mute if hasattr(dn, "mute") else False,
             "is_simulation": dn.type == 'SIMULATION_OUTPUT',
+            "upstream_nodes": [],
         })
 
     return connected_items, disconnected_items
 
 
+def check_bake_cache_info(obj, mod, bake_item, timestamps_dict=None):
+    """
+    Accurately check cache presence and modification timestamp.
+    Returns (has_cache: bool, timestamp: float).
+    """
+    if not bake_item:
+        return False, 0.0
+
+    key = f"{mod.name}::{bake_item.bake_id}"
+    recorded_ts = timestamps_dict.get(key, 0.0) if timestamps_dict else 0.0
+
+    # 1. Check internal data blocks
+    if getattr(bake_item, "data_blocks", None) and len(bake_item.data_blocks) > 0:
+        return True, recorded_ts if recorded_ts > 0 else 1.0
+
+    # 2. Check disk directory
+    dir_path = getattr(bake_item, "directory", "")
+    candidate_dirs = []
+
+    if dir_path:
+        candidate_dirs.append(bpy.path.abspath(dir_path))
+
+    # Also check default blendcache directories
+    if bpy.data.filepath:
+        blend_dir = os.path.dirname(bpy.data.filepath)
+        blend_name = os.path.splitext(os.path.basename(bpy.data.filepath))[0]
+        cache_root = os.path.join(blend_dir, f"blendcache_{blend_name}")
+        candidate_dirs.append(os.path.join(cache_root, f"{obj.name}_{mod.name}", str(bake_item.bake_id)))
+        candidate_dirs.append(os.path.join(cache_root, str(bake_item.bake_id)))
+
+    for c_dir in candidate_dirs:
+        try:
+            if os.path.exists(c_dir):
+                files = [os.path.join(c_dir, f) for f in os.listdir(c_dir)]
+                if files:
+                    mtimes = [os.path.getmtime(f) for f in files if os.path.isfile(f)]
+                    disk_ts = max(mtimes) if mtimes else os.path.getmtime(c_dir)
+                    effective_ts = max(disk_ts, recorded_ts)
+                    return True, effective_ts
+        except Exception:
+            pass
+
+    if recorded_ts > 0:
+        return True, recorded_ts
+
+    return False, 0.0
+
+
 def check_bake_has_cache(bake_item):
-    """Accurately check if a bake item has cached simulation or geometry data."""
+    """Legacy compatibility helper."""
     if not bake_item:
         return False
-    try:
-        if getattr(bake_item, "data_blocks", None) and len(bake_item.data_blocks) > 0:
+    if getattr(bake_item, "data_blocks", None) and len(bake_item.data_blocks) > 0:
+        return True
+    if getattr(bake_item, "directory", ""):
+        p = bpy.path.abspath(bake_item.directory)
+        if os.path.exists(p) and len(os.listdir(p)) > 0:
             return True
-        if getattr(bake_target := getattr(bake_item, "bake_target", ""), "upper", lambda: "")() == 'DISK' or bake_target == 'DISK':
-            directory = getattr(bake_item, "directory", "")
-            if directory:
-                cache_dir = bpy.path.abspath(directory)
-                if os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0:
-                    return True
-    except Exception:
-        pass
     return False
 
 
 def get_object_bake_list(obj, scene=None, show_disconnected=True):
     """
     Return all modifiers and their bake nodes in hierarchical DAG execution sequence
-    with clean compact local numbers, group encapsulation, depth, and metadata.
+    with 3-state cache status (UNBAKED, BAKED, STALE), number badges, and metadata.
     """
     if not obj or not hasattr(obj, "modifiers"):
         return []
@@ -230,7 +280,12 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
     scene_frame_start = scene.frame_start if scene else 1
     scene_frame_end = scene.frame_end if scene else 250
 
+    state = getattr(obj, "gn_bake_state", None)
+    timestamps_dict = state.get_timestamps() if state else {}
+
     modifiers_data = []
+    max_upstream_mod_bake_time = 0.0
+
     for mod in obj.modifiers:
         if mod.type != 'NODES' or not mod.node_group:
             continue
@@ -254,13 +309,56 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
         all_conn_items = flatten_items(conn_tree)
         all_dis_items = flatten_items(dis_tree)
 
+        # First pass: collect node timestamps and cache presence
+        node_timestamps = {}
+        node_has_cache = {}
+
+        for item in all_conn_items + all_dis_items:
+            node = item.get("node")
+            b_item = bake_by_node.get(node)
+            has_c, ts = check_bake_cache_info(obj, mod, b_item, timestamps_dict)
+            node_has_cache[node] = has_c
+            node_timestamps[node] = ts
+
+        # Track max bake time in this modifier to propagate to downstream modifiers
+        current_mod_max_time = 0.0
+        for ts in node_timestamps.values():
+            if ts > current_mod_max_time:
+                current_mod_max_time = ts
+
         def build_bake_info(item):
             node = item.get("node")
             b_item = bake_by_node.get(node)
             if b_item and b_item in unmapped_bakes:
                 unmapped_bakes.remove(b_item)
 
-            has_cache = check_bake_has_cache(b_item)
+            has_cache = node_has_cache.get(node, False)
+            node_time = node_timestamps.get(node, 0.0)
+
+            # Determine 3-state cache status: UNBAKED, BAKED, STALE
+            if not has_cache:
+                cache_state = 'UNBAKED'
+                status_icon = 'RADIOBUT_OFF'
+            else:
+                is_stale = False
+                # Check upstream nodes in same modifier tree
+                for u_node in item.get("upstream_nodes", []):
+                    u_time = node_timestamps.get(u_node, 0.0)
+                    if u_time > node_time:
+                        is_stale = True
+                        break
+
+                # Check if an upstream modifier in the stack was rebaked
+                if not is_stale and max_upstream_mod_bake_time > node_time:
+                    is_stale = True
+
+                if is_stale:
+                    cache_state = 'STALE'
+                    status_icon = 'FILE_REFRESH'
+                else:
+                    cache_state = 'BAKED'
+                    status_icon = 'CHECKMARK'
+
             mode = getattr(b_item, "bake_mode", "ANIMATION" if item.get("is_simulation") else "STILL")
 
             if mode == 'STILL':
@@ -282,6 +380,9 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "mode": mode,
                 "frame_info": frame_info,
                 "has_cache": has_cache,
+                "cache_state": cache_state,
+                "status_icon": status_icon,
+                "bake_timestamp": node_time,
                 "is_group": item.get("is_group", False),
                 "is_connected": item.get("is_connected", True),
                 "is_muted": item.get("is_muted", False),
@@ -319,7 +420,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
         for b_item in unmapped_bakes:
             node = getattr(b_item, "node", None)
             node_name = node.label if (node and node.label) else (node.name if node else f"Bake #{b_item.bake_id}")
-            has_cache = check_bake_has_cache(b_item)
+            has_cache, b_time = check_bake_cache_info(obj, mod, b_item, timestamps_dict)
             mode = getattr(b_item, "bake_mode", "STILL")
 
             if mode == 'STILL':
@@ -342,6 +443,9 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "mode": mode,
                 "frame_info": frame_info,
                 "has_cache": has_cache,
+                "cache_state": 'BAKED' if has_cache else 'UNBAKED',
+                "status_icon": 'CHECKMARK' if has_cache else 'RADIOBUT_OFF',
+                "bake_timestamp": b_time,
                 "is_group": False,
                 "is_connected": False,
                 "is_muted": node.mute if node else False,
@@ -349,15 +453,17 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "bake_item": b_item,
             })
 
+        # Update modifier-level timestamp for downstream modifiers
+        if current_mod_max_time > max_upstream_mod_bake_time:
+            max_upstream_mod_bake_time = current_mod_max_time
+
         # Separate active vs muted/stale for filtering
         actual_conn_active = [b for b in connected_bakes if not b.get("is_group") and not b.get("is_muted")]
         actual_conn_muted = [b for b in connected_bakes if not b.get("is_group") and b.get("is_muted")]
         actual_dis = [b for b in disconnected_bakes if not b.get("is_group")]
 
-        # Total stale / disc count = disconnected nodes + muted bakes
         total_stale_count = len(actual_dis) + len(actual_conn_muted)
 
-        # If show_disconnected is False, filter out disconnected and muted bakes and groups that only contain muted bakes
         if not show_disconnected:
             visible_bakes = []
             for b in connected_bakes:

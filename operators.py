@@ -187,12 +187,15 @@ class OBJECT_OT_gn_bake_single_action(Operator):
             return {'CANCELLED'}
 
         try:
+            state = getattr(obj, "gn_bake_state", None)
             if self.action == 'BAKE':
                 bpy.ops.object.geometry_node_bake_single(
                     session_uid=obj.session_uid,
                     modifier_name=self.modifier_name,
                     bake_id=self.bake_id
                 )
+                if state:
+                    state.set_bake_timestamp(self.modifier_name, self.bake_id)
                 self.report({'INFO'}, f"Baked node (ID {self.bake_id}) in {self.modifier_name}")
             elif self.action == 'CLEAR':
                 bpy.ops.object.geometry_node_bake_delete_single(
@@ -200,6 +203,8 @@ class OBJECT_OT_gn_bake_single_action(Operator):
                     modifier_name=self.modifier_name,
                     bake_id=self.bake_id
                 )
+                if state:
+                    state.clear_bake_timestamp(self.modifier_name, self.bake_id)
                 self.report({'INFO'}, f"Cleared cache for node (ID {self.bake_id}) in {self.modifier_name}")
             return {'FINISHED'}
         except Exception as e:

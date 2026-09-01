@@ -138,8 +138,8 @@ def draw_gn_bake_ui(layout, context):
             for _ in range(depth):
                 left.label(text="", icon='BLANK1')
 
-            # Cache status indicator
-            icon = 'CHECKMARK' if b["has_cache"] else 'RADIOBUT_OFF'
+            # 3-State cache status indicator (UNBAKED: RADIOBUT_OFF, BAKED: CHECKMARK, STALE: FILE_REFRESH)
+            icon = b.get("status_icon", 'CHECKMARK' if b.get("has_cache") else 'RADIOBUT_OFF')
             left.label(text="", icon=icon)
 
             # Compact right arrow navigate & frame node button
