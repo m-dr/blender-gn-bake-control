@@ -53,26 +53,30 @@ def draw_gn_bake_ui(layout, context):
         op_mod_nav = head.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
         op_mod_nav.modifier_name = mod_name
 
-        # Group and render bake items
-        current_group = None
+        current_group_box = None
+        current_group_name = None
 
         for b in bakes:
-            group_name = b.get("group_name", "")
-
-            # If transitioning to a new group, draw a clean group sub-header
-            if group_name and group_name != current_group:
-                current_group = group_name
-                group_box = box.box()
-                grp_head = group_box.row(align=True)
-                grp_head.label(text=f"{group_name}", icon='NODETREE')
+            # Handle Group Header items
+            if b.get("is_group"):
+                current_group_name = b.get("name")
+                current_group_box = box.box()
+                grp_head = current_group_box.row(align=True)
+                grp_head.label(text=f"[{b['num_tag']}]", icon='NONE')
+                grp_head.label(text=f"{b['name']}", icon='NODETREE')
                 op_grp_nav = grp_head.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
                 op_grp_nav.modifier_name = mod_name
                 op_grp_nav.node_tree_name = b.get("tree_name", "")
-            elif not group_name:
-                current_group = None
+                op_grp_nav.node_name = b.get("node_name", "")
+                continue
 
-            # Render row inside group_box if nested, else directly in modifier box
-            target_container = group_box if group_name else box
+            # Determine container (sub-box if inside a group, else main modifier box)
+            group_name = b.get("group_name", "")
+            if not group_name:
+                current_group_box = None
+                current_group_name = None
+
+            target_container = current_group_box if (current_group_box and group_name) else box
             row = target_container.row(align=True)
 
             is_conn = b.get("is_connected", True)
@@ -81,13 +85,18 @@ def draw_gn_bake_ui(layout, context):
             if not is_conn or is_muted:
                 row.active = False
 
-            # Proportional split: Left (Status + Jump + Node), Right (Frame + Bake + Clear)
+            # Proportional split: Left (Stage Badge + Status + Jump + Node), Right (Frame + Bake + Clear)
             split = row.split(factor=0.55, align=True)
 
-            # Left section: Status + Jump + Node Name
+            # Left section
             left = split.row(align=True)
 
-            # Status icon
+            # Hierarchical stage number badge (e.g. [1.1], [1.2], [2.1], [3])
+            num_tag = b.get("num_tag", "")
+            if num_tag:
+                left.label(text=f"[{num_tag}]")
+
+            # Cache status indicator
             icon = 'CHECKMARK' if b["has_cache"] else 'RADIOBUT_OFF'
             left.label(text="", icon=icon)
 

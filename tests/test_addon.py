@@ -3,17 +3,23 @@ import sys
 import unittest
 import importlib.util
 
-# Load the add-on module dynamically as 'gn_bake_control'
-ADDON_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-INIT_PATH = os.path.join(ADDON_DIR, "__init__.py")
+addon_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+pkg_name = "gn_bake_control"
 
-spec = importlib.util.spec_from_file_location("gn_bake_control", INIT_PATH)
-gn_bake_control = importlib.util.module_from_spec(spec)
-sys.modules["gn_bake_control"] = gn_bake_control
-spec.loader.exec_module(gn_bake_control)
+if pkg_name not in sys.modules:
+    spec = importlib.util.spec_from_file_location(
+        pkg_name,
+        os.path.join(addon_dir, "__init__.py"),
+        submodule_search_locations=[addon_dir]
+    )
+    gn_bake_control = importlib.util.module_from_spec(spec)
+    sys.modules[pkg_name] = gn_bake_control
+    spec.loader.exec_module(gn_bake_control)
+else:
+    gn_bake_control = sys.modules[pkg_name]
 
 import bpy
-from gn_bake_control import traversal, ui, operators, preferences
+from gn_bake_control import traversal, ui, operators, preferences, properties
 
 
 class DummyLayout:
@@ -22,43 +28,53 @@ class DummyLayout:
         self.enabled = True
         self.active = True
         self.alignment = 'LEFT'
+
     def row(self, align=False):
         return DummyLayout()
+
     def column(self, align=False):
         return DummyLayout()
+
     def split(self, factor=0.0, align=False):
         return DummyLayout()
+
     def box(self):
         return DummyLayout()
+
     def label(self, text="", icon='NONE'):
         pass
+
     def prop(self, data, prop_name, text="", icon='NONE', icon_only=False, placeholder=""):
         pass
+
     def operator(self, op_idname, text="", icon='NONE'):
         return DummyOperator()
+
     def separator(self, factor=1.0):
         pass
 
 
 class DummyOperator:
     def __init__(self):
+        self.action = "BAKE"
         self.modifier_name = ""
         self.node_tree_name = ""
         self.node_name = ""
+        self.bake_id = 0
 
 
 class TestGNBakeControl(unittest.TestCase):
-
     @classmethod
     def setUpClass(cls):
+        import gn_bake_control
         try:
-            gn_bake_control.unregister()
+            gn_bake_control.register()
         except Exception:
             pass
-        gn_bake_control.register()
 
     @classmethod
     def tearDownClass(cls):
+        import gn_bake_control
         try:
             gn_bake_control.unregister()
         except Exception:
@@ -69,6 +85,7 @@ class TestGNBakeControl(unittest.TestCase):
         self.assertTrue(hasattr(ui, "DATA_PT_gn_bake_control"))
         self.assertTrue(hasattr(ui, "VIEW3D_PT_gn_bake_control"))
         self.assertTrue(hasattr(bpy.ops.object, "gn_bake_navigate_to"))
+        self.assertTrue(hasattr(bpy.ops.object, "gn_bake_single_action"))
         self.assertTrue(hasattr(bpy.types.Object, "gn_bake_state"))
 
     def test_02_simulation_and_group_encapsulation(self):
@@ -86,24 +103,36 @@ class TestGNBakeControl(unittest.TestCase):
         mod_data = traversal.get_object_bake_list(obj, scene=bpy.context.scene)
         self.assertEqual(len(mod_data), 2)
 
-        # Mod 1: GeometryNodes (4 bakes in exact execution order)
+        # Mod 1: GeometryNodes (4 active bakes in DAG execution order)
         mod1 = mod_data[0]
         self.assertEqual(mod1["modifier_name"], "GeometryNodes")
-        self.assertEqual(len(mod1["bakes"]), 4)
+        self.assertEqual(mod1["connected_count"], 4)
 
-        paths = [b["path"] for b in mod1["bakes"]]
-        self.assertIn("G_Temporal Smooth Position > Simulation Output", paths)
-        self.assertEqual(paths[0], "Bake.001")
-        self.assertEqual(paths[1], "Bake")
-        self.assertEqual(paths[2], "G_Temporal Smooth Position > Simulation Output")
-        self.assertEqual(paths[3], "Bake.002")
+        # Verify hierarchical stage tags
+        actual_bakes = [b for b in mod1["bakes"] if not b.get("is_group")]
+        self.assertEqual(len(actual_bakes), 4)
 
-        # Cache check: Bake.001 and Bake have disk cache
-        self.assertTrue(mod1["bakes"][0]["has_cache"])
-        self.assertTrue(mod1["bakes"][1]["has_cache"])
+        tags = [b["num_tag"] for b in actual_bakes]
+        names = [b["name"] for b in actual_bakes]
+
+        self.assertEqual(tags[0], "1.1")
+        self.assertEqual(names[0], "Bake.001")
+
+        self.assertEqual(tags[1], "1.2")
+        self.assertEqual(names[1], "Bake")
+
+        self.assertEqual(tags[2], "2.1")
+        self.assertEqual(names[2], "Simulation Output")
+
+        self.assertEqual(tags[3], "3")
+        self.assertEqual(names[3], "Bake.002")
+
+        # Cache check
+        self.assertTrue(actual_bakes[0]["has_cache"])
+        self.assertTrue(actual_bakes[1]["has_cache"])
 
     def test_03_disconnected_node_handling(self):
-        """Verify disconnected nodes are flagged and appended at the bottom."""
+        """Verify disconnected nodes are flagged and numbered above active stages."""
         obj = bpy.data.objects.get("ANIM")
         mod_gn = obj.modifiers["GeometryNodes"]
         bake_node = mod_gn.node_group.nodes["Bake.001"]
@@ -118,7 +147,7 @@ class TestGNBakeControl(unittest.TestCase):
         self.assertEqual(mod1["connected_count"], 3)
         self.assertEqual(mod1["disconnected_count"], 1)
 
-        # Last item should be the disconnected Bake.001
+        # Last item should be the disconnected Bake.001 with number above max active stage
         last_bake = mod1["bakes"][-1]
         self.assertEqual(last_bake["name"], "Bake.001")
         self.assertFalse(last_bake["is_connected"])
@@ -167,8 +196,11 @@ class TestGNBakeControl(unittest.TestCase):
         mod_data = traversal.get_object_bake_list(obj)
         mod2 = mod_data[1]
         self.assertEqual(mod2["modifier_name"], "GeometryNodes.001")
-        # Should be 'Bake Group > Bake.001' not 'Bake.001 > Bake.001'
-        self.assertEqual(mod2["bakes"][1]["path"], "Bake Group > Bake.001")
+
+        # Nested group check
+        nested_bake = [b for b in mod2["bakes"] if b["name"] == "Bake.001" and not b.get("is_group")][0]
+        self.assertEqual(nested_bake["group_name"], "Bake Group")
+        self.assertEqual(nested_bake["num_tag"], "1.2.1")
 
         # Test navigation into nested group
         res = bpy.ops.object.gn_bake_navigate_to(
@@ -184,13 +216,13 @@ class TestGNBakeControl(unittest.TestCase):
         bpy.context.view_layer.objects.active = obj
 
         mod_data = traversal.get_object_bake_list(obj)
-        bakes = mod_data[0]["bakes"]
+        actual_bakes = [b for b in mod_data[0]["bakes"] if not b.get("is_group")]
 
         # Check group containment metadata
-        sim_bake = [b for b in bakes if b["name"] == "Simulation Output"][0]
+        sim_bake = [b for b in actual_bakes if b["name"] == "Simulation Output"][0]
         self.assertEqual(sim_bake["group_name"], "G_Temporal Smooth Position")
 
-        target_bake = bakes[0]
+        target_bake = actual_bakes[0]
         # Test clear action
         res_clear = bpy.ops.object.gn_bake_single_action(
             action='CLEAR',

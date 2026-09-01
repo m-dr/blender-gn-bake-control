@@ -1,4 +1,5 @@
 import os
+from collections import defaultdict
 import bpy
 
 
@@ -11,10 +12,9 @@ def get_reachable_nodes_in_tree(node_tree):
 
     output_nodes = [n for n in node_tree.nodes if n.type == 'GROUP_OUTPUT']
     if not output_nodes:
-        # If no explicit group output, consider nodes with linked outputs as connected
         return set(n for n in node_tree.nodes if len(n.outputs) > 0 and any(s.is_linked for s in n.outputs))
 
-    upstream_adj = {n: [] for n in node_tree.nodes}
+    upstream_adj = defaultdict(list)
     for link in node_tree.links:
         if link.is_valid:
             upstream_adj[link.to_node].append(link.from_node)
@@ -31,10 +31,29 @@ def get_reachable_nodes_in_tree(node_tree):
     return visited
 
 
-def traverse_tree_bakes(node_tree, prefix="", group_hierarchy=None, is_parent_connected=True, is_parent_muted=False):
+def node_tree_has_bakes(node_tree, visited=None):
+    """Check recursively if a node tree contains any BAKE or SIMULATION_OUTPUT nodes."""
+    if not node_tree:
+        return False
+    if visited is None:
+        visited = set()
+    if node_tree in visited:
+        return False
+    visited.add(node_tree)
+
+    for n in node_tree.nodes:
+        if n.type in ('BAKE', 'SIMULATION_OUTPUT'):
+            return True
+        if n.type == 'GROUP' and getattr(n, "node_tree", None):
+            if node_tree_has_bakes(n.node_tree, visited):
+                return True
+    return False
+
+
+def compute_tree_bake_stages(node_tree, prefix_stage="", group_hierarchy=None, is_parent_connected=True, is_parent_muted=False):
     """
-    Recursively find all bake nodes and simulation outputs in a node tree in topological execution order.
-    Returns (connected_bakes, disconnected_bakes).
+    Compute DAG longest-path topological execution stages and hierarchical number tags (e.g. 1.1, 1.2, 2, 2.1, 3).
+    Returns (connected_items, disconnected_items).
     """
     if not node_tree:
         return [], []
@@ -44,70 +63,139 @@ def traverse_tree_bakes(node_tree, prefix="", group_hierarchy=None, is_parent_co
 
     reachable = get_reachable_nodes_in_tree(node_tree)
 
-    in_degree = {n: 0 for n in node_tree.nodes}
-    adj = {n: [] for n in node_tree.nodes}
-
+    upstream_adj = defaultdict(list)
+    downstream_adj = defaultdict(list)
     for link in node_tree.links:
-        if link.is_valid and link.from_node in in_degree and link.to_node in in_degree:
-            adj[link.from_node].append(link.to_node)
-            in_degree[link.to_node] += 1
+        if link.is_valid:
+            upstream_adj[link.to_node].append(link.from_node)
+            downstream_adj[link.from_node].append(link.to_node)
 
-    queue = [n for n, deg in in_degree.items() if deg == 0]
-    queue.sort(key=lambda n: (n.location.x, -n.location.y))
+    # In-degree of reachable nodes for topological ordering
+    in_degree = {n: 0 for n in reachable}
+    for n in reachable:
+        for prev in upstream_adj[n]:
+            if prev in reachable:
+                in_degree[n] += 1
 
-    ordered_nodes = []
-    while queue:
-        curr = queue.pop(0)
-        ordered_nodes.append(curr)
-        for neighbor in adj[curr]:
-            in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0:
-                queue.append(neighbor)
-        queue.sort(key=lambda n: (n.location.x, -n.location.y))
+    topo_order = []
+    zero_q = [n for n, d in in_degree.items() if d == 0]
+    zero_q.sort(key=lambda n: (n.location.x, -n.location.y))
+    while zero_q:
+        curr = zero_q.pop(0)
+        topo_order.append(curr)
+        for nxt in downstream_adj[curr]:
+            if nxt in in_degree:
+                in_degree[nxt] -= 1
+                if in_degree[nxt] == 0:
+                    zero_q.append(nxt)
+        zero_q.sort(key=lambda n: (n.location.x, -n.location.y))
 
-    for n in node_tree.nodes:
-        if n not in ordered_nodes:
-            ordered_nodes.append(n)
+    # Identify interesting nodes in active data-flow (Bakes, Sim zones, or Groups with bakes)
+    interesting_nodes = []
+    for n in topo_order:
+        if n.type in ('BAKE', 'SIMULATION_OUTPUT'):
+            interesting_nodes.append(n)
+        elif n.type == 'GROUP' and getattr(n, "node_tree", None) and node_tree_has_bakes(n.node_tree):
+            interesting_nodes.append(n)
 
-    connected_bakes = []
-    disconnected_bakes = []
+    # Compute longest path stage from preceding interesting nodes
+    stages = {}
+    for n in interesting_nodes:
+        max_prev_stage = 0
+        visited_up = set()
+        up_q = list(upstream_adj[n])
+        while up_q:
+            u = up_q.pop(0)
+            if u in visited_up:
+                continue
+            visited_up.add(u)
+            if u in stages and stages[u] > max_prev_stage:
+                max_prev_stage = stages[u]
+            for prev_u in upstream_adj[u]:
+                if prev_u in reachable and prev_u not in visited_up:
+                    up_q.append(prev_u)
+        stages[n] = max_prev_stage + 1
 
-    for node in ordered_nodes:
-        name = node.label if node.label else node.name
-        path = f"{prefix}{name}" if prefix else name
-        node_conn = is_parent_connected and (node in reachable)
-        node_muted = is_parent_muted or bool(getattr(node, "mute", False))
+    by_stage = defaultdict(list)
+    for n in interesting_nodes:
+        by_stage[stages[n]].append(n)
 
-        if node.type in ('BAKE', 'SIMULATION_OUTPUT'):
-            item = {
-                "name": name,
-                "path": path,
-                "group_name": " > ".join(group_hierarchy) if group_hierarchy else "",
-                "node": node,
-                "tree": node_tree,
-                "is_connected": node_conn,
-                "is_muted": node_muted,
-                "is_simulation": node.type == 'SIMULATION_OUTPUT',
-            }
-            if node_conn:
-                connected_bakes.append(item)
+    connected_items = []
+    max_stage = max(by_stage.keys()) if by_stage else 0
+
+    for stage_num in sorted(by_stage.keys()):
+        stage_nodes = by_stage[stage_num]
+        stage_nodes.sort(key=lambda n: (n.location.x, -n.location.y))
+        has_siblings = len(stage_nodes) > 1
+
+        for idx, node in enumerate(stage_nodes, 1):
+            if prefix_stage:
+                num_tag = f"{prefix_stage}.{stage_num}" if not has_siblings else f"{prefix_stage}.{stage_num}.{idx}"
             else:
-                disconnected_bakes.append(item)
+                num_tag = f"{stage_num}" if not has_siblings else f"{stage_num}.{idx}"
 
-        elif node.type == 'GROUP' and getattr(node, "node_tree", None):
-            group_name = node.label if node.label else node.node_tree.name
-            sub_prefix = f"{prefix}{group_name} > " if prefix else f"{group_name} > "
-            sub_conn, sub_dis = traverse_tree_bakes(
-                node.node_tree,
-                prefix=sub_prefix,
-                group_hierarchy=group_hierarchy + [group_name],
-                is_parent_connected=node_conn,
-                is_parent_muted=node_muted,
-            )
-            connected_bakes.extend(sub_conn)
-            disconnected_bakes.extend(sub_dis)
+            name = node.label if node.label else node.name
+            node_muted = is_parent_muted or bool(getattr(node, "mute", False))
 
-    return connected_bakes, disconnected_bakes
+            if node.type in ('BAKE', 'SIMULATION_OUTPUT'):
+                connected_items.append({
+                    "name": name,
+                    "num_tag": num_tag,
+                    "group_name": " > ".join(group_hierarchy) if group_hierarchy else "",
+                    "node": node,
+                    "tree": node_tree,
+                    "is_group": False,
+                    "is_connected": is_parent_connected,
+                    "is_muted": node_muted,
+                    "is_simulation": node.type == 'SIMULATION_OUTPUT',
+                })
+            elif node.type == 'GROUP' and getattr(node, "node_tree", None):
+                group_name = node.label if node.label else node.node_tree.name
+                sub_conn, sub_dis = compute_tree_bake_stages(
+                    node.node_tree,
+                    prefix_stage=num_tag,
+                    group_hierarchy=group_hierarchy + [group_name],
+                    is_parent_connected=is_parent_connected,
+                    is_parent_muted=node_muted,
+                )
+                connected_items.append({
+                    "name": group_name,
+                    "num_tag": num_tag,
+                    "group_name": " > ".join(group_hierarchy) if group_hierarchy else "",
+                    "node": node,
+                    "tree": node_tree,
+                    "is_group": True,
+                    "group_tree": node.node_tree,
+                    "is_connected": is_parent_connected,
+                    "is_muted": node_muted,
+                    "is_simulation": False,
+                    "children": sub_conn,
+                })
+
+    # Disconnected nodes (not reachable from GROUP_OUTPUT)
+    disconnected_items = []
+    disc_nodes = [
+        n for n in node_tree.nodes
+        if n not in reachable and n.type in ('BAKE', 'SIMULATION_OUTPUT')
+    ]
+    disc_nodes.sort(key=lambda n: (n.location.x, -n.location.y))
+
+    for i, dn in enumerate(disc_nodes, 1):
+        num_tag = f"{max_stage + i}" if not prefix_stage else f"{prefix_stage}.{max_stage + i}"
+        name = dn.label if dn.label else dn.name
+        disconnected_items.append({
+            "name": name,
+            "num_tag": num_tag,
+            "group_name": " > ".join(group_hierarchy) if group_hierarchy else "",
+            "node": dn,
+            "tree": node_tree,
+            "is_group": False,
+            "is_connected": False,
+            "is_muted": dn.mute if hasattr(dn, "mute") else False,
+            "is_simulation": dn.type == 'SIMULATION_OUTPUT',
+        })
+
+    return connected_items, disconnected_items
 
 
 def check_bake_has_cache(bake_item):
@@ -130,8 +218,8 @@ def check_bake_has_cache(bake_item):
 
 def get_object_bake_list(obj, scene=None, show_disconnected=True):
     """
-    Return all modifiers and their bake nodes (connected in wiring order, disconnected at bottom)
-    with group encapsulation and execution metadata.
+    Return all modifiers and their bake nodes in hierarchical DAG execution sequence
+    with number badges ([1.1], [1.2], [2], [2.1], [3]), group encapsulation, and metadata.
     """
     if not obj or not hasattr(obj, "modifiers"):
         return []
@@ -152,7 +240,20 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
         bake_by_node = {b.node: b for b in bakes_collection if getattr(b, "node", None)}
         unmapped_bakes = list(bakes_collection)
 
-        conn_tree_bakes, dis_tree_bakes = traverse_tree_bakes(mod.node_group)
+        conn_tree, dis_tree = compute_tree_bake_stages(mod.node_group)
+
+        def flatten_items(item_list):
+            flat = []
+            for item in item_list:
+                if item.get("is_group"):
+                    flat.append(item)
+                    flat.extend(flatten_items(item.get("children", [])))
+                else:
+                    flat.append(item)
+            return flat
+
+        all_conn_items = flatten_items(conn_tree)
+        all_dis_items = flatten_items(dis_tree)
 
         def build_bake_info(item):
             node = item.get("node")
@@ -173,7 +274,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
 
             return {
                 "name": item["name"],
-                "path": item["path"],
+                "num_tag": item.get("num_tag", ""),
                 "group_name": item.get("group_name", ""),
                 "node_name": node.name if node else "",
                 "tree_name": item["tree"].name if item.get("tree") else "",
@@ -181,16 +282,17 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "mode": mode,
                 "frame_info": frame_info,
                 "has_cache": has_cache,
+                "is_group": item.get("is_group", False),
                 "is_connected": item.get("is_connected", True),
                 "is_muted": item.get("is_muted", False),
                 "is_simulation": item.get("is_simulation", False),
                 "bake_item": b_item,
             }
 
-        connected_items = [build_bake_info(it) for it in conn_tree_bakes]
-        disconnected_items = [build_bake_info(it) for it in dis_tree_bakes]
+        connected_bakes = [build_bake_info(it) for it in all_conn_items]
+        disconnected_bakes = [build_bake_info(it) for it in all_dis_items]
 
-        # Remaining unmapped bakes in mod.bakes (e.g. deleted or unlinked nodes)
+        # Remaining unmapped bakes in mod.bakes
         for b_item in unmapped_bakes:
             node = getattr(b_item, "node", None)
             node_name = node.label if (node and node.label) else (node.name if node else f"Bake #{b_item.bake_id}")
@@ -205,9 +307,10 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 else:
                     frame_info = f"{scene_frame_start} – {scene_frame_end}"
 
-            disconnected_items.append({
+            next_idx = len(connected_bakes) + len(disconnected_bakes) + 1
+            disconnected_bakes.append({
                 "name": node_name,
-                "path": f"{node_name} (Unlinked)",
+                "num_tag": f"{next_idx}",
                 "group_name": "",
                 "node_name": node.name if node else "",
                 "tree_name": mod.node_group.name if mod.node_group else "",
@@ -215,20 +318,25 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "mode": mode,
                 "frame_info": frame_info,
                 "has_cache": has_cache,
+                "is_group": False,
                 "is_connected": False,
                 "is_muted": node.mute if node else False,
                 "is_simulation": getattr(node, "type", "") == 'SIMULATION_OUTPUT',
                 "bake_item": b_item,
             })
 
-        all_mod_bakes = connected_items + (disconnected_items if show_disconnected else [])
+        all_mod_bakes = connected_bakes + (disconnected_bakes if show_disconnected else [])
 
         if all_mod_bakes:
+            # Count only actual bake items (not group headers)
+            actual_conn = [b for b in connected_bakes if not b.get("is_group")]
+            actual_dis = [b for b in disconnected_bakes if not b.get("is_group")]
+
             modifiers_data.append({
                 "modifier_name": mod.name,
                 "is_enabled": mod.show_viewport,
-                "connected_count": len(connected_items),
-                "disconnected_count": len(disconnected_items),
+                "connected_count": len(actual_conn),
+                "disconnected_count": len(actual_dis),
                 "bakes": all_mod_bakes,
             })
 
