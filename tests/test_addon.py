@@ -356,14 +356,34 @@ class TestGNBakeControl(unittest.TestCase):
         self.assertEqual(state.static_bake_mode, 'GLOBAL')
         self.assertEqual(state.static_global_frame, 50)
         
-        # Test frame range toggle
-        state.show_frame_range = False
-        self.assertFalse(state.show_frame_range)
-        state.show_frame_range = True
-        self.assertTrue(state.show_frame_range)
+        # Test frame range toggles
+        state.show_baked_range = False
+        self.assertFalse(state.show_baked_range)
+        state.show_baked_range = True
+        self.assertTrue(state.show_baked_range)
+
+        state.show_target_range = False
+        self.assertFalse(state.show_target_range)
+        state.show_target_range = True
+        self.assertTrue(state.show_target_range)
         
         dummy_layout = DummyLayout()
         ui.draw_gn_bake_ui(dummy_layout, bpy.context)
+
+    def test_14_baked_vs_target_ranges(self):
+        """Verify distinction between baked frames and target ranges."""
+        obj = bpy.data.objects.get("ANIM")
+        bpy.context.view_layer.objects.active = obj
+        
+        mod_data = traversal.get_object_bake_list(obj, scene=bpy.context.scene)
+        bakes = mod_data[0]["bakes"]
+        
+        # Check target vs baked frame info presence
+        for b in bakes:
+            if not b.get("is_group"):
+                self.assertIn("baked_frame_info", b)
+                self.assertIn("target_frame_info", b)
+                self.assertIn("target_frame_tooltip", b)
 
 
 if __name__ == "__main__":

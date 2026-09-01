@@ -15,7 +15,8 @@ def draw_gn_bake_ui(layout, context):
     state = getattr(obj, "gn_bake_state", None)
     show_disconnected = state.show_disconnected if state else True
     flatten_hierarchy = state.flatten_hierarchy if state else False
-    show_frame_range = state.show_frame_range if state else True
+    show_baked_range = state.show_baked_range if state else True
+    show_target_range = state.show_target_range if state else True
     show_stats = state.show_stats if state else False
     collapsed_groups = set(state.collapsed_groups.split(";")) if (state and state.collapsed_groups) else set()
 
@@ -35,7 +36,7 @@ def draw_gn_bake_ui(layout, context):
 
     mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=show_disconnected)
 
-    # 1. Toolbar: 2 tidy rows to prevent any text truncation
+    # 1. Toolbar: 2 tidy rows (Filter & Flatten, then Column toggles)
     row_tools1 = layout.row(align=True)
     if state:
         row_tools1.prop(
@@ -55,9 +56,15 @@ def draw_gn_bake_ui(layout, context):
     if state:
         row_tools2.prop(
             state,
-            "show_frame_range",
-            text="Frames",
-            icon='TIME' if state.show_frame_range else 'RESTRICT_VIEW_ON'
+            "show_baked_range",
+            text="Baked",
+            icon='CHECKMARK' if state.show_baked_range else 'RESTRICT_VIEW_ON'
+        )
+        row_tools2.prop(
+            state,
+            "show_target_range",
+            text="Target",
+            icon='PREVIEW_RANGE' if state.show_target_range else 'RESTRICT_VIEW_ON'
         )
         row_tools2.prop(
             state,
@@ -196,13 +203,16 @@ def draw_gn_bake_ui(layout, context):
             if not is_conn:
                 row.active = False
 
-            # Exact structured split: Left (Name area) vs Right (Uniform columns area)
-            if show_frame_range and show_stats:
-                split_factor = 0.35
-            elif show_frame_range or show_stats:
-                split_factor = 0.44
+            # Calculate dynamic split factor based on active right-hand columns
+            active_cols_count = (1 if show_baked_range else 0) + (1 if show_target_range else 0) + (1 if show_stats else 0)
+            if active_cols_count == 3:
+                split_factor = 0.30
+            elif active_cols_count == 2:
+                split_factor = 0.38
+            elif active_cols_count == 1:
+                split_factor = 0.48
             else:
-                split_factor = 0.54
+                split_factor = 0.60
 
             split_main = row.split(factor=split_factor, align=True)
 
@@ -257,89 +267,100 @@ def draw_gn_bake_ui(layout, context):
             right = split_main.row(align=True)
             right.active = True
 
-            frame_icon = 'IMAGE_DATA' if b["mode"] == 'STILL' else 'TIME'
+            baked_text = b.get("baked_frame_info", "-")
+            target_text = b.get("target_frame_info", "-")
+            dur_text = b.get("duration_str", "-")
+            is_still = b["mode"] == 'STILL'
 
-            if show_frame_range and show_stats:
-                col_f = right.split(factor=0.38, align=True)
-                col_f.label(text=b["frame_info"], icon=frame_icon)
-
-                col_ops = col_f.split(factor=0.58, align=True)
+            # Helper for action buttons [Bake] [Trash]
+            def draw_ops(container):
                 if bake_id:
-                    op_bake = col_ops.operator("object.gn_bake_single_action", text="Bake")
+                    op_bake = container.operator("object.gn_bake_single_action", text="Bake")
                     op_bake.action = 'BAKE'
                     op_bake.modifier_name = mod_name
                     op_bake.bake_id = bake_id
 
-                    sub_clear = col_ops.row(align=True)
+                    sub_clear = container.row(align=True)
                     sub_clear.enabled = b["has_cache"]
                     op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
                     op_clear.action = 'CLEAR'
                     op_clear.modifier_name = mod_name
                     op_clear.bake_id = bake_id
                 else:
-                    col_ops.label(text="")
+                    container.label(text="")
 
-                col_dur = col_ops.row(align=True)
-                col_dur.alignment = 'RIGHT'
-                col_dur.label(text=b.get("duration_str", "-"))
+            # Layout sub-split configurations:
+            if show_baked_range and show_target_range and show_stats:
+                c_b = right.split(factor=0.28, align=True)
+                c_b.label(text=baked_text, icon='IMAGE_DATA' if (is_still and baked_text != "-") else 'NONE')
 
-            elif show_frame_range and not show_stats:
-                col_f = right.split(factor=0.45, align=True)
-                col_f.label(text=b["frame_info"], icon=frame_icon)
+                c_t = c_b.split(factor=0.38, align=True)
+                c_t.label(text=target_text, icon='IMAGE_DATA' if is_still else 'NONE')
 
-                col_ops = col_f.row(align=True)
-                if bake_id:
-                    op_bake = col_ops.operator("object.gn_bake_single_action", text="Bake")
-                    op_bake.action = 'BAKE'
-                    op_bake.modifier_name = mod_name
-                    op_bake.bake_id = bake_id
+                c_ops = c_t.split(factor=0.50, align=True)
+                draw_ops(c_ops)
 
-                    sub_clear = col_ops.row(align=True)
-                    sub_clear.enabled = b["has_cache"]
-                    op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
-                    op_clear.action = 'CLEAR'
-                    op_clear.modifier_name = mod_name
-                    op_clear.bake_id = bake_id
-                else:
-                    col_ops.label(text="")
+                c_dur = c_ops.row(align=True)
+                c_dur.alignment = 'RIGHT'
+                c_dur.label(text=dur_text)
 
-            elif not show_frame_range and show_stats:
-                col_ops = right.split(factor=0.65, align=True)
-                if bake_id:
-                    op_bake = col_ops.operator("object.gn_bake_single_action", text="Bake")
-                    op_bake.action = 'BAKE'
-                    op_bake.modifier_name = mod_name
-                    op_bake.bake_id = bake_id
+            elif show_baked_range and show_target_range and not show_stats:
+                c_b = right.split(factor=0.33, align=True)
+                c_b.label(text=baked_text, icon='IMAGE_DATA' if (is_still and baked_text != "-") else 'NONE')
 
-                    sub_clear = col_ops.row(align=True)
-                    sub_clear.enabled = b["has_cache"]
-                    op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
-                    op_clear.action = 'CLEAR'
-                    op_clear.modifier_name = mod_name
-                    op_clear.bake_id = bake_id
-                else:
-                    col_ops.label(text="")
+                c_t = c_b.split(factor=0.48, align=True)
+                c_t.label(text=target_text, icon='IMAGE_DATA' if is_still else 'NONE')
 
-                col_dur = col_ops.row(align=True)
-                col_dur.alignment = 'RIGHT'
-                col_dur.label(text=b.get("duration_str", "-"))
+                c_ops = c_t.row(align=True)
+                draw_ops(c_ops)
+
+            elif show_baked_range and not show_target_range and show_stats:
+                c_b = right.split(factor=0.38, align=True)
+                c_b.label(text=baked_text, icon='IMAGE_DATA' if (is_still and baked_text != "-") else 'NONE')
+
+                c_ops = c_b.split(factor=0.58, align=True)
+                draw_ops(c_ops)
+
+                c_dur = c_ops.row(align=True)
+                c_dur.alignment = 'RIGHT'
+                c_dur.label(text=dur_text)
+
+            elif not show_baked_range and show_target_range and show_stats:
+                c_t = right.split(factor=0.38, align=True)
+                c_t.label(text=target_text, icon='IMAGE_DATA' if is_still else 'NONE')
+
+                c_ops = c_t.split(factor=0.58, align=True)
+                draw_ops(c_ops)
+
+                c_dur = c_ops.row(align=True)
+                c_dur.alignment = 'RIGHT'
+                c_dur.label(text=dur_text)
+
+            elif show_baked_range and not show_target_range and not show_stats:
+                c_b = right.split(factor=0.45, align=True)
+                c_b.label(text=baked_text, icon='IMAGE_DATA' if (is_still and baked_text != "-") else 'NONE')
+
+                c_ops = c_b.row(align=True)
+                draw_ops(c_ops)
+
+            elif not show_baked_range and show_target_range and not show_stats:
+                c_t = right.split(factor=0.45, align=True)
+                c_t.label(text=target_text, icon='IMAGE_DATA' if is_still else 'NONE')
+
+                c_ops = c_t.row(align=True)
+                draw_ops(c_ops)
+
+            elif not show_baked_range and not show_target_range and show_stats:
+                c_ops = right.split(factor=0.65, align=True)
+                draw_ops(c_ops)
+
+                c_dur = c_ops.row(align=True)
+                c_dur.alignment = 'RIGHT'
+                c_dur.label(text=dur_text)
 
             else:
-                col_ops = right.row(align=True)
-                if bake_id:
-                    op_bake = col_ops.operator("object.gn_bake_single_action", text="Bake")
-                    op_bake.action = 'BAKE'
-                    op_bake.modifier_name = mod_name
-                    op_bake.bake_id = bake_id
-
-                    sub_clear = col_ops.row(align=True)
-                    sub_clear.enabled = b["has_cache"]
-                    op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
-                    op_clear.action = 'CLEAR'
-                    op_clear.modifier_name = mod_name
-                    op_clear.bake_id = bake_id
-                else:
-                    col_ops.label(text="")
+                c_ops = right.row(align=True)
+                draw_ops(c_ops)
 
 
 class DATA_PT_gn_bake_control(Panel):

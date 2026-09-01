@@ -21,6 +21,17 @@ class GNBakeObjectState(PropertyGroup):
         description="Show bake timing and performance statistics",
         default=False,
     )
+    show_baked_range: BoolProperty(
+        name="Show Baked Range",
+        description="Show or hide currently baked frame(s) column",
+        default=True,
+    )
+    show_target_range: BoolProperty(
+        name="Show Target Range",
+        description="Show or hide target frame or range column",
+        default=True,
+    )
+    # Legacy alias
     show_frame_range: BoolProperty(
         name="Show Frame Info",
         description="Show or hide frame numbers / range column",

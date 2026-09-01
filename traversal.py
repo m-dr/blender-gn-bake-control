@@ -1,4 +1,5 @@
 import os
+import re
 from collections import defaultdict
 import bpy
 
@@ -290,6 +291,72 @@ def check_bake_cache_info(obj, mod, bake_item, timestamps_dict=None):
     return False, 0.0
 
 
+def scan_baked_frames(bake_item, mod=None, state=None):
+    """
+    Scans cache directory or blend data to determine the exact range of frames actually baked.
+    Returns:
+      (min_frame, max_frame): tuple of ints for animation
+      single_frame: int for still
+      None: if no cached frame files exist
+    """
+    if not bake_item:
+        return None
+
+    dir_path = getattr(bake_item, "directory", "")
+    abs_p = bpy.path.abspath(dir_path) if dir_path else ""
+
+    candidate_dirs = []
+    if abs_p and os.path.exists(abs_p):
+        candidate_dirs.append(abs_p)
+
+    if bpy.data.filepath:
+        blend_dir = os.path.dirname(bpy.data.filepath)
+        if blend_dir and os.path.exists(blend_dir):
+            try:
+                for entry in os.listdir(blend_dir):
+                    if entry.startswith("blendcache_"):
+                        cache_root = os.path.join(blend_dir, entry)
+                        if os.path.isdir(cache_root):
+                            for dirpath, _, _ in os.walk(cache_root):
+                                if os.path.basename(dirpath) == str(bake_item.bake_id):
+                                    candidate_dirs.append(dirpath)
+            except Exception:
+                pass
+
+    frames = set()
+    found_any_file = False
+
+    for c_dir in candidate_dirs:
+        for root, _, files in os.walk(c_dir):
+            for f in files:
+                found_any_file = True
+                m = re.match(r'^(\d{4,6})_\d{4,6}\.(?:blob|json)$', f)
+                if m:
+                    frames.add(int(m.group(1)))
+                else:
+                    m2 = re.match(r'^(?:frame_)?(\d+)\.', f)
+                    if m2:
+                        try:
+                            frames.add(int(m2.group(1)))
+                        except Exception:
+                            pass
+
+    if frames:
+        sorted_f = sorted(frames)
+        return (sorted_f[0], sorted_f[-1])
+
+    if getattr(bake_item, "data_blocks", None) and len(bake_item.data_blocks) > 0:
+        found_any_file = True
+
+    if found_any_file:
+        rec = state.get_recorded_frame(mod.name, bake_item.bake_id) if (state and mod) else None
+        if rec is not None:
+            return rec
+        return "SINGLE"
+
+    return None
+
+
 def check_bake_has_cache(bake_item):
     """Legacy compatibility helper."""
     if not bake_item:
@@ -410,15 +477,46 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             rec_frame = state.get_recorded_frame(mod.name, b_item.bake_id) if (state and b_item) else None
             duration_sec = state.get_bake_duration(mod.name, b_item.bake_id) if (state and b_item) else 0.0
 
+            # 1. Currently Baked Range (actual files on disk/cache)
+            if not has_cache:
+                baked_frame_info = "-"
+            else:
+                if mode == 'STILL':
+                    baked_frame = rec_frame if rec_frame is not None else scene_frame_current
+                    baked_frame_info = f"{baked_frame}"
+                else:
+                    cached_range = scan_baked_frames(b_item, mod, state)
+                    if isinstance(cached_range, tuple):
+                        min_f, max_f = cached_range
+                        baked_frame_info = f"{min_f}" if min_f == max_f else f"{min_f} – {max_f}"
+                    elif isinstance(cached_range, int):
+                        baked_frame_info = f"{cached_range}"
+                    elif getattr(b_item, "use_custom_simulation_frame_range", False):
+                        baked_frame_info = f"{b_item.frame_start} – {b_item.frame_end}"
+                    else:
+                        baked_frame_info = f"{scene_frame_start} – {scene_frame_end}"
+
+            # 2. Target Frame / Range and Tooltip metadata
             if mode == 'STILL':
-                display_frame = rec_frame if (has_cache and rec_frame is not None) else scene_frame_current
-                frame_info = f"{display_frame}"
+                if state and state.static_bake_mode == 'ORIGINAL':
+                    target_f = rec_frame if rec_frame is not None else scene_frame_current
+                    target_frame_info = f"{target_f}"
+                    target_frame_tooltip = f"Original frame policy: Target frame {target_f}"
+                elif state and state.static_bake_mode == 'GLOBAL':
+                    target_frame_info = f"{state.static_global_frame}"
+                    target_frame_tooltip = f"Global frame policy: Target frame {state.static_global_frame}"
+                else:
+                    target_frame_info = f"{scene_frame_current}"
+                    target_frame_tooltip = f"Current frame policy: Target active timeline frame {scene_frame_current}"
             else:
                 if b_item and getattr(b_item, "use_custom_simulation_frame_range", False):
-                    frame_info = f"{b_item.frame_start} – {b_item.frame_end} (Cust)"
+                    target_frame_info = f"{b_item.frame_start} – {b_item.frame_end}"
+                    target_frame_tooltip = f"Custom range set in node settings: {b_item.frame_start} to {b_item.frame_end}"
                 else:
-                    frame_info = f"{scene_frame_start} – {scene_frame_end}"
+                    target_frame_info = f"{scene_frame_start} – {scene_frame_end}"
+                    target_frame_tooltip = f"Scene timeline range: {scene_frame_start} to {scene_frame_end}"
 
+            frame_info = baked_frame_info if has_cache else target_frame_info
             duration_str = f"{duration_sec:.1f}s" if duration_sec > 0 else "-"
 
             return {
@@ -434,6 +532,9 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "bake_id": b_item.bake_id if b_item else 0,
                 "mode": mode,
                 "frame_info": frame_info,
+                "baked_frame_info": baked_frame_info,
+                "target_frame_info": target_frame_info,
+                "target_frame_tooltip": target_frame_tooltip,
                 "duration_str": duration_str,
                 "duration_sec": duration_sec,
                 "recorded_frame": rec_frame,
