@@ -20,29 +20,45 @@ def draw_gn_bake_ui(layout, context):
 
     for entry in mod_data:
         mod_name = entry["modifier_name"]
+        is_enabled = entry.get("is_enabled", True)
         bakes = entry["bakes"]
 
         box = layout.box()
+        # Fade container if the modifier is disabled in viewport
+        box.active = is_enabled
+
         # Modifier header
         head = box.row(align=True)
-        head.label(text=f"{mod_name}", icon='NODETREE')
+        mod_icon = 'NODETREE' if is_enabled else 'RESTRICT_VIEW_ON'
+        head.label(text=f"{mod_name}", icon=mod_icon)
         head.label(text=f"({len(bakes)} {'Active Bake' if len(bakes) == 1 else 'Active Bakes'})")
 
-        # List each bake node with details
+        # Jump to modifier in Node Editor button
+        op_mod_nav = head.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
+        op_mod_nav.modifier_name = mod_name
+
+        # List each bake node
         for b in bakes:
             row = box.row(align=True)
-            # Status icon
+            # 1. Status icon
             icon = 'CHECKMARK' if b["has_cache"] else 'RADIOBUT_OFF'
             row.label(text="", icon=icon)
 
-            # Node display name / path
+            # 2. Compact right arrow navigate to node button
+            if b.get("node_name"):
+                op_node_nav = row.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
+                op_node_nav.modifier_name = mod_name
+                op_node_nav.node_tree_name = b.get("tree_name", "")
+                op_node_nav.node_name = b.get("node_name", "")
+            else:
+                row.label(text="", icon='BLANK1')
+
+            # 3. Node display name / path
             row.label(text=b["path"], icon='PHYSICS')
 
-            # Mode badge
-            row.label(text=f"[{b['mode']}]")
-
-            # Frame range / still frame info
-            row.label(text=b["frame_info"], icon='TIME')
+            # 4. Frame range / still frame info with distinct Still vs Anim icon
+            frame_icon = 'IMAGE_DATA' if b["mode"] == 'STILL' else 'TIME'
+            row.label(text=b["frame_info"], icon=frame_icon)
 
 
 class DATA_PT_gn_bake_control(Panel):

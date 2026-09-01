@@ -182,6 +182,7 @@ def get_object_bake_list(obj, scene=None):
         if mod_items:
             modifiers_data.append({
                 "modifier_name": mod.name,
+                "is_enabled": mod.show_viewport,
                 "bakes": mod_items,
             })
 
