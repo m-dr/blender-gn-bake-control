@@ -258,6 +258,8 @@ def check_bake_cache_info(obj, mod, bake_item, timestamps_dict=None):
                         pass
             if mtimes:
                 return True, max(max(mtimes), recorded_ts)
+            elif os.path.exists(abs_p) and len(os.listdir(abs_p)) > 0:
+                return True, recorded_ts if recorded_ts > 0 else 1.0
 
     # 3. Bi-directional scan for native Blender blendcache directory
     if bpy.data.filepath:
@@ -405,14 +407,19 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                     status_icon = 'CHECKMARK'
 
             mode = getattr(b_item, "bake_mode", "ANIMATION" if item.get("is_simulation") else "STILL")
+            rec_frame = state.get_recorded_frame(mod.name, b_item.bake_id) if (state and b_item) else None
+            duration_sec = state.get_bake_duration(mod.name, b_item.bake_id) if (state and b_item) else 0.0
 
             if mode == 'STILL':
-                frame_info = f"Frame {scene_frame_current}"
+                display_frame = rec_frame if (has_cache and rec_frame is not None) else scene_frame_current
+                frame_info = f"{display_frame}"
             else:
                 if b_item and getattr(b_item, "use_custom_simulation_frame_range", False):
                     frame_info = f"{b_item.frame_start} – {b_item.frame_end} (Cust)"
                 else:
                     frame_info = f"{scene_frame_start} – {scene_frame_end}"
+
+            duration_str = f"{duration_sec:.2f}s" if duration_sec > 0 else "-"
 
             return {
                 "name": item["name"],
@@ -427,6 +434,9 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "bake_id": b_item.bake_id if b_item else 0,
                 "mode": mode,
                 "frame_info": frame_info,
+                "duration_str": duration_str,
+                "duration_sec": duration_sec,
+                "recorded_frame": rec_frame,
                 "has_cache": has_cache,
                 "cache_state": cache_state,
                 "status_icon": status_icon,
@@ -471,14 +481,19 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             node_name = node.label if (node and node.label) else (node.name if node else f"Bake #{b_item.bake_id}")
             has_cache, b_time = check_bake_cache_info(obj, mod, b_item, timestamps_dict)
             mode = getattr(b_item, "bake_mode", "STILL")
+            rec_frame = state.get_recorded_frame(mod.name, b_item.bake_id) if state else None
+            duration_sec = state.get_bake_duration(mod.name, b_item.bake_id) if state else 0.0
 
             if mode == 'STILL':
-                frame_info = f"Frame {scene_frame_current}"
+                display_frame = rec_frame if (has_cache and rec_frame is not None) else scene_frame_current
+                frame_info = f"{display_frame}"
             else:
                 if getattr(b_item, "use_custom_simulation_frame_range", False):
                     frame_info = f"{b_item.frame_start} – {b_item.frame_end} (Cust)"
                 else:
                     frame_info = f"{scene_frame_start} – {scene_frame_end}"
+
+            duration_str = f"{duration_sec:.2f}s" if duration_sec > 0 else "-"
 
             next_idx = max_root_stage + len(disconnected_bakes) + 1
             disconnected_bakes.append({
@@ -494,6 +509,9 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "bake_id": b_item.bake_id,
                 "mode": mode,
                 "frame_info": frame_info,
+                "duration_str": duration_str,
+                "duration_sec": duration_sec,
+                "recorded_frame": rec_frame,
                 "has_cache": has_cache,
                 "cache_state": 'BAKED' if has_cache else 'UNBAKED',
                 "status_icon": 'CHECKMARK' if has_cache else 'RADIOBUT_OFF',

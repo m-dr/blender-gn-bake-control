@@ -1,4 +1,5 @@
 import bpy
+import time
 from bpy.types import Operator
 from bpy.props import StringProperty, IntProperty, EnumProperty
 
@@ -178,33 +179,66 @@ class OBJECT_OT_gn_bake_single_action(Operator):
             self.report({'ERROR'}, f"Modifier '{self.modifier_name}' not found.")
             return {'CANCELLED'}
 
-        try:
-            state = getattr(obj, "gn_bake_state", None)
-            if self.action == 'BAKE':
-                try:
-                    if not bpy.app.background:
-                        bpy.ops.object.geometry_node_bake_single(
-                            'INVOKE_DEFAULT',
-                            session_uid=obj.session_uid,
-                            modifier_name=self.modifier_name,
-                            bake_id=self.bake_id
-                        )
-                    else:
-                        bpy.ops.object.geometry_node_bake_single(
-                            session_uid=obj.session_uid,
-                            modifier_name=self.modifier_name,
-                            bake_id=self.bake_id
-                        )
-                except Exception:
-                    bpy.ops.object.geometry_node_bake_single(
-                        session_uid=obj.session_uid,
-                        modifier_name=self.modifier_name,
-                        bake_id=self.bake_id
-                    )
+        state = getattr(obj, "gn_bake_state", None)
 
-                if state:
-                    state.set_bake_timestamp(self.modifier_name, self.bake_id)
-                self.report({'INFO'}, f"Baked node (ID {self.bake_id}) in {self.modifier_name}")
+        try:
+            if self.action == 'BAKE':
+                b_item = None
+                for b in getattr(mod, "bakes", []):
+                    if b.bake_id == self.bake_id:
+                        b_item = b
+                        break
+
+                is_still = not (b_item and getattr(b_item, "bake_mode", "") == 'ANIMATION')
+                orig_frame = context.scene.frame_current
+                target_frame = orig_frame
+
+                if is_still and state:
+                    if state.static_bake_mode == 'ORIGINAL':
+                        rec = state.get_recorded_frame(self.modifier_name, self.bake_id)
+                        if rec is not None:
+                            target_frame = rec
+                    elif state.static_bake_mode == 'GLOBAL':
+                        target_frame = state.static_global_frame
+
+                try:
+                    if is_still and context.scene.frame_current != target_frame:
+                        context.scene.frame_set(target_frame)
+
+                    t0 = time.time()
+                    try:
+                        if not bpy.app.background:
+                            bpy.ops.object.geometry_node_bake_single(
+                                'INVOKE_DEFAULT',
+                                session_uid=obj.session_uid,
+                                modifier_name=self.modifier_name,
+                                bake_id=self.bake_id
+                            )
+                        else:
+                            bpy.ops.object.geometry_node_bake_single(
+                                session_uid=obj.session_uid,
+                                modifier_name=self.modifier_name,
+                                bake_id=self.bake_id
+                            )
+                    except Exception:
+                        bpy.ops.object.geometry_node_bake_single(
+                            session_uid=obj.session_uid,
+                            modifier_name=self.modifier_name,
+                            bake_id=self.bake_id
+                        )
+
+                    duration = time.time() - t0
+                    if state:
+                        state.set_bake_timestamp(self.modifier_name, self.bake_id)
+                        state.set_bake_duration(self.modifier_name, self.bake_id, duration)
+                        if is_still:
+                            state.set_recorded_frame(self.modifier_name, self.bake_id, target_frame)
+
+                    self.report({'INFO'}, f"Baked node (ID {self.bake_id}) in {self.modifier_name} ({duration:.2f}s)")
+                finally:
+                    if is_still and context.scene.frame_current != orig_frame:
+                        context.scene.frame_set(orig_frame)
+
             elif self.action == 'CLEAR':
                 bpy.ops.object.geometry_node_bake_delete_single(
                     session_uid=obj.session_uid,
@@ -250,119 +284,106 @@ class OBJECT_OT_gn_bake_batch_action(Operator):
             return {'FINISHED'}
 
         state = getattr(obj, "gn_bake_state", None)
+        wm = context.window_manager
 
-        if self.action == 'REBAKE_STALE':
-            stale_items = []
-            for m in mod_data:
-                m_name = m["modifier_name"]
-                for b in m["bakes"]:
-                    if not b.get("is_group") and b.get("is_connected") and not b.get("is_muted") and b.get("cache_state") == 'STALE' and b.get("bake_id"):
-                        stale_items.append((m_name, b.get("bake_id"), b.get("name")))
-
-            if not stale_items:
-                self.report({'INFO'}, "No stale bake nodes found to rebake.")
-                return {'FINISHED'}
-
-            baked_count = 0
-            for m_name, bake_id, b_name in stale_items:
-                try:
-                    bpy.ops.object.geometry_node_bake_single(
-                        session_uid=obj.session_uid,
-                        modifier_name=m_name,
-                        bake_id=bake_id
-                    )
-                    if state:
-                        state.set_bake_timestamp(m_name, bake_id)
-                    baked_count += 1
-                except Exception as e:
-                    self.report({'WARNING'}, f"Failed baking {b_name}: {e}")
-
-            self.report({'INFO'}, f"Successfully rebaked {baked_count} stale bake node(s).")
-            return {'FINISHED'}
-
-        elif self.action == 'CLEAR_STALE':
-            stale_items = []
-            for m in mod_data:
-                m_name = m["modifier_name"]
-                for b in m["bakes"]:
-                    if not b.get("is_group") and b.get("cache_state") == 'STALE' and b.get("bake_id"):
-                        stale_items.append((m_name, b.get("bake_id"), b.get("name")))
-
-            if not stale_items:
-                self.report({'INFO'}, "No stale bake nodes found to clear.")
-                return {'FINISHED'}
-
-            cleared_count = 0
-            for m_name, bake_id, b_name in stale_items:
-                try:
-                    bpy.ops.object.geometry_node_bake_delete_single(
-                        session_uid=obj.session_uid,
-                        modifier_name=m_name,
-                        bake_id=bake_id
-                    )
-                    if state:
-                        state.clear_bake_timestamp(m_name, bake_id)
-                    cleared_count += 1
-                except Exception as e:
-                    self.report({'WARNING'}, f"Failed clearing {b_name}: {e}")
-
-            self.report({'INFO'}, f"Cleared cache for {cleared_count} stale bake node(s).")
-            return {'FINISHED'}
-
-        elif self.action == 'BAKE_ALL':
+        if self.action in ('REBAKE_STALE', 'BAKE_ALL'):
             target_items = []
             for m in mod_data:
                 m_name = m["modifier_name"]
                 for b in m["bakes"]:
                     if not b.get("is_group") and b.get("is_connected") and not b.get("is_muted") and b.get("bake_id"):
-                        target_items.append((m_name, b.get("bake_id"), b.get("name")))
+                        if self.action == 'REBAKE_STALE' and b.get("cache_state") != 'STALE':
+                            continue
+                        target_items.append((m_name, b.get("bake_id"), b.get("name"), b.get("mode") == 'STILL'))
 
             if not target_items:
-                self.report({'INFO'}, "No active connected bake nodes found.")
+                msg = "No stale bake nodes found to rebake." if self.action == 'REBAKE_STALE' else "No active connected bake nodes found."
+                self.report({'INFO'}, msg)
                 return {'FINISHED'}
 
+            orig_frame = context.scene.frame_current
+            wm.progress_begin(0, len(target_items))
             baked_count = 0
-            for m_name, bake_id, b_name in target_items:
-                try:
-                    bpy.ops.object.geometry_node_bake_single(
-                        session_uid=obj.session_uid,
-                        modifier_name=m_name,
-                        bake_id=bake_id
-                    )
-                    if state:
-                        state.set_bake_timestamp(m_name, bake_id)
-                    baked_count += 1
-                except Exception as e:
-                    self.report({'WARNING'}, f"Failed baking {b_name}: {e}")
+            total_duration = 0.0
 
-            self.report({'INFO'}, f"Successfully baked {baked_count} node(s) in dependency order.")
+            try:
+                for idx, (m_name, bake_id, b_name, is_still) in enumerate(target_items):
+                    wm.progress_update(idx)
+                    target_frame = orig_frame
+                    if is_still and state:
+                        if state.static_bake_mode == 'ORIGINAL':
+                            rec = state.get_recorded_frame(m_name, bake_id)
+                            if rec is not None:
+                                target_frame = rec
+                        elif state.static_bake_mode == 'GLOBAL':
+                            target_frame = state.static_global_frame
+
+                    if is_still and context.scene.frame_current != target_frame:
+                        context.scene.frame_set(target_frame)
+
+                    t0 = time.time()
+                    try:
+                        bpy.ops.object.geometry_node_bake_single(
+                            session_uid=obj.session_uid,
+                            modifier_name=m_name,
+                            bake_id=bake_id
+                        )
+                        dur = time.time() - t0
+                        total_duration += dur
+                        if state:
+                            state.set_bake_timestamp(m_name, bake_id)
+                            state.set_bake_duration(m_name, bake_id, dur)
+                            if is_still:
+                                state.set_recorded_frame(m_name, bake_id, target_frame)
+                        baked_count += 1
+                    except Exception as e:
+                        self.report({'WARNING'}, f"Failed baking {b_name}: {e}")
+
+                wm.progress_update(len(target_items))
+            finally:
+                if context.scene.frame_current != orig_frame:
+                    context.scene.frame_set(orig_frame)
+                wm.progress_end()
+
+            self.report({'INFO'}, f"Successfully baked {baked_count} node(s) in dependency order ({total_duration:.2f}s).")
             return {'FINISHED'}
 
-        elif self.action == 'CLEAR_ALL':
-            cached_items = []
+        elif self.action in ('CLEAR_STALE', 'CLEAR_ALL'):
+            target_items = []
             for m in mod_data:
                 m_name = m["modifier_name"]
                 for b in m["bakes"]:
-                    if not b.get("is_group") and b.get("has_cache") and b.get("bake_id"):
-                        cached_items.append((m_name, b.get("bake_id"), b.get("name")))
+                    if not b.get("is_group") and b.get("bake_id"):
+                        if self.action == 'CLEAR_STALE' and b.get("cache_state") != 'STALE':
+                            continue
+                        if self.action == 'CLEAR_ALL' and not b.get("has_cache"):
+                            continue
+                        target_items.append((m_name, b.get("bake_id"), b.get("name")))
 
-            if not cached_items:
-                self.report({'INFO'}, "No cached bake nodes found to clear.")
+            if not target_items:
+                msg = "No stale bake nodes found to clear." if self.action == 'CLEAR_STALE' else "No cached bake nodes found to clear."
+                self.report({'INFO'}, msg)
                 return {'FINISHED'}
 
+            wm.progress_begin(0, len(target_items))
             cleared_count = 0
-            for m_name, bake_id, b_name in cached_items:
-                try:
-                    bpy.ops.object.geometry_node_bake_delete_single(
-                        session_uid=obj.session_uid,
-                        modifier_name=m_name,
-                        bake_id=bake_id
-                    )
-                    if state:
-                        state.clear_bake_timestamp(m_name, bake_id)
-                    cleared_count += 1
-                except Exception as e:
-                    self.report({'WARNING'}, f"Failed clearing {b_name}: {e}")
+            try:
+                for idx, (m_name, bake_id, b_name) in enumerate(target_items):
+                    wm.progress_update(idx)
+                    try:
+                        bpy.ops.object.geometry_node_bake_delete_single(
+                            session_uid=obj.session_uid,
+                            modifier_name=m_name,
+                            bake_id=bake_id
+                        )
+                        if state:
+                            state.clear_bake_timestamp(m_name, bake_id)
+                        cleared_count += 1
+                    except Exception as e:
+                        self.report({'WARNING'}, f"Failed clearing {b_name}: {e}")
+                wm.progress_update(len(target_items))
+            finally:
+                wm.progress_end()
 
             self.report({'INFO'}, f"Cleared cache for {cleared_count} bake node(s).")
             return {'FINISHED'}

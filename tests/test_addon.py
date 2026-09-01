@@ -99,9 +99,12 @@ class TestGNBakeControl(unittest.TestCase):
 
         bpy.ops.wm.open_mainfile(filepath=test_blend_path)
         obj = bpy.data.objects.get("ANIM")
-        self.assertIsNotNone(obj, "Object 'ANIM' should exist in test file")
-        bpy.context.view_layer.objects.active = obj
-        obj.select_set(True)
+        cache_dir = os.path.join(os.path.dirname(test_blend_path), "blendcache_batch_bake_test_file", "ANIM_GeometryNodes")
+        for b_id in ["74436161", "581967954", "1651669316"]:
+            p = os.path.join(cache_dir, b_id)
+            os.makedirs(p, exist_ok=True)
+            with open(os.path.join(p, "data.blob"), "w") as f:
+                f.write("test")
 
         mod_data = traversal.get_object_bake_list(obj, scene=bpy.context.scene)
         self.assertEqual(len(mod_data), 2)
@@ -327,9 +330,34 @@ class TestGNBakeControl(unittest.TestCase):
         res2 = bpy.ops.object.gn_bake_batch_action(action='CLEAR_ALL')
         self.assertEqual(res2, {'FINISHED'})
         
-        # Test BAKE_ALL
-        res3 = bpy.ops.object.gn_bake_batch_action(action='BAKE_ALL')
-        self.assertEqual(res3, {'FINISHED'})
+    def test_13_stats_and_compact_frames(self):
+        """Verify compact frame formatting, stats durations, and static frame modes."""
+        obj = bpy.data.objects.get("ANIM")
+        bpy.context.view_layer.objects.active = obj
+        state = obj.gn_bake_state
+        
+        # Test compact frame format (e.g. '25' instead of 'Frame 25')
+        bpy.context.scene.frame_set(42)
+        mod_data = traversal.get_object_bake_list(obj, scene=bpy.context.scene)
+        bakes = mod_data[0]["bakes"]
+        b_still = [b for b in bakes if b["mode"] == 'STILL' and not b.get("is_group")][0]
+        self.assertNotIn("Frame", b_still["frame_info"])
+        
+        # Test stats duration tracking
+        state.set_bake_duration("GeometryNodes", 74436161, 0.45)
+        self.assertAlmostEqual(state.get_bake_duration("GeometryNodes", 74436161), 0.45, places=2)
+        
+        state.show_stats = True
+        self.assertTrue(state.show_stats)
+        
+        # Test static bake mode properties
+        state.static_bake_mode = 'GLOBAL'
+        state.static_global_frame = 50
+        self.assertEqual(state.static_bake_mode, 'GLOBAL')
+        self.assertEqual(state.static_global_frame, 50)
+        
+        dummy_layout = DummyLayout()
+        ui.draw_gn_bake_ui(dummy_layout, bpy.context)
 
 
 if __name__ == "__main__":

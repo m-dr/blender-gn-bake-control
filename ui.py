@@ -15,6 +15,7 @@ def draw_gn_bake_ui(layout, context):
     state = getattr(obj, "gn_bake_state", None)
     show_disconnected = state.show_disconnected if state else True
     flatten_hierarchy = state.flatten_hierarchy if state else False
+    show_stats = state.show_stats if state else False
     collapsed_groups = set(state.collapsed_groups.split(";")) if (state and state.collapsed_groups) else set()
 
     # Detect active selected node in Node Editor space
@@ -33,7 +34,7 @@ def draw_gn_bake_ui(layout, context):
 
     mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=show_disconnected)
 
-    # 1. Toolbar row with Filter and Flatten Hierarchy toggles
+    # 1. Toolbar row: Filter, Flatten, and Stats toggles
     row_tools = layout.row(align=True)
     if state:
         row_tools.prop(
@@ -48,8 +49,22 @@ def draw_gn_bake_ui(layout, context):
             text="Flatten",
             icon='ALIGN_JUSTIFY' if state.flatten_hierarchy else 'OUTLINER'
         )
+        row_tools.prop(
+            state,
+            "show_stats",
+            text="Stats",
+            icon='INFO'
+        )
 
-    # 2. Batch Operations row: Rebake Stale, Clear Stale, (Re)bake All, Clear All
+    # 2. Stats Settings / Policy Row (Shown when Stats is enabled)
+    if state and show_stats:
+        row_stat_settings = layout.row(align=True)
+        row_stat_settings.scale_y = 0.9
+        row_stat_settings.prop(state, "static_bake_mode", text="Static Frame")
+        if state.static_bake_mode == 'GLOBAL':
+            row_stat_settings.prop(state, "static_global_frame", text="Frame")
+
+    # 3. Batch Operations row: Rebake Stale, Clear Stale, (Re)bake All, Clear All
     row_batch = layout.row(align=True)
     row_batch.scale_y = 1.05
 
@@ -173,8 +188,9 @@ def draw_gn_bake_ui(layout, context):
             if not is_conn:
                 row.active = False
 
-            # Proportional split: Left (Indentation + Status + Jump + Stage/Node), Right (Frame + Bake + Clear)
-            split = row.split(factor=0.58, align=True)
+            # Proportional split: Left (Indentation + Status + Jump + Stage/Node), Right (Frame + Stats + Bake + Clear)
+            split_factor = 0.52 if show_stats else 0.58
+            split = row.split(factor=split_factor, align=True)
 
             # Left section (dimmed visually if muted or disconnected)
             left = split.row(align=True)
@@ -221,17 +237,22 @@ def draw_gn_bake_ui(layout, context):
 
             left.label(text=display_text, icon=node_icon)
 
-            # Active selection indicator icon if selected in editor (native theme arrow icon only)
+            # Active selection indicator icon if selected in editor
             if is_selected:
                 left.label(text="", icon='RESTRICT_SELECT_OFF')
 
-            # Right section: Right-aligned Frame info + Action buttons (Active & functional)
+            # Right section: Right-aligned Frame info + Stats + Action buttons
             right = split.row(align=True)
             right.alignment = 'RIGHT'
             right.active = True
 
             frame_icon = 'IMAGE_DATA' if b["mode"] == 'STILL' else 'TIME'
             right.label(text=b["frame_info"], icon=frame_icon)
+
+            # Optional Stats column (Last bake duration)
+            if show_stats:
+                dur_text = b.get("duration_str", "-")
+                right.label(text=dur_text, icon='TIME')
 
             # Bake action button (Text)
             bake_id = b.get("bake_id", 0)
