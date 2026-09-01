@@ -13,18 +13,25 @@ def draw_gn_bake_ui(layout, context):
 
     state = getattr(obj, "gn_bake_state", None)
     show_disconnected = state.show_disconnected if state else True
+    flatten_hierarchy = state.flatten_hierarchy if state else False
     collapsed_groups = set(state.collapsed_groups.split(";")) if (state and state.collapsed_groups) else set()
 
     mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=show_disconnected)
 
-    # Toolbar row with Disconnected / Muted filter toggle
+    # Toolbar row with Filter and Flatten Hierarchy toggles
     row_tools = layout.row(align=True)
     if state:
         row_tools.prop(
             state,
             "show_disconnected",
-            text="Show Disconnected & Muted",
+            text="Show Disc/Muted",
             icon='HIDE_OFF' if state.show_disconnected else 'HIDE_ON'
+        )
+        row_tools.prop(
+            state,
+            "flatten_hierarchy",
+            text="Flatten",
+            icon='ALIGN_JUSTIFY' if state.flatten_hierarchy else 'OUTLINER'
         )
 
     if not mod_data:
@@ -57,15 +64,18 @@ def draw_gn_bake_ui(layout, context):
         # Track collapsed group hierarchy depth
         skip_below_depth = None
 
-        # Outliner-style continuous hierarchical tree with vertical guide lines & disclosure collapse
         for b in bakes:
-            depth = b.get("depth", 0)
+            # When Flatten Hierarchy is active, hide group header rows
+            if flatten_hierarchy and b.get("is_group"):
+                continue
+
+            depth = 0 if flatten_hierarchy else b.get("depth", 0)
             is_conn = b.get("is_connected", True)
             is_muted = b.get("is_muted", False)
 
-            # Skip children of collapsed groups
-            if skip_below_depth is not None:
-                if depth > skip_below_depth:
+            # Skip children of collapsed groups when in hierarchical view
+            if not flatten_hierarchy and skip_below_depth is not None:
+                if b.get("depth", 0) > skip_below_depth:
                     continue
                 else:
                     skip_below_depth = None
@@ -74,7 +84,7 @@ def draw_gn_bake_ui(layout, context):
             full_key = f"{mod_name}::{group_key}"
             is_collapsed = full_key in collapsed_groups
 
-            # 1. Group Folder Header Row
+            # 1. Group Folder Header Row (Hierarchical view only)
             if b.get("is_group"):
                 grp_row = box.row(align=True)
                 grp_row.scale_y = 0.85
@@ -82,9 +92,9 @@ def draw_gn_bake_ui(layout, context):
                 if not is_conn or is_muted:
                     grp_row.active = False
 
-                # Vertical tree guide lines for nesting depth
+                # Exact icon-proportional indentation
                 for _ in range(depth):
-                    grp_row.label(text="│")
+                    grp_row.label(text="", icon='BLANK1')
 
                 # Expand / Collapse disclosure triangle button
                 op_toggle = grp_row.operator(
@@ -124,9 +134,9 @@ def draw_gn_bake_ui(layout, context):
             if is_muted or not is_conn:
                 left.active = False
 
-            # Vertical tree guide lines for multi-level nesting
+            # Exact icon-proportional indentation
             for _ in range(depth):
-                left.label(text="│")
+                left.label(text="", icon='BLANK1')
 
             # Cache status indicator
             icon = 'CHECKMARK' if b["has_cache"] else 'RADIOBUT_OFF'
@@ -149,7 +159,12 @@ def draw_gn_bake_ui(layout, context):
             else:
                 node_icon = 'PHYSICS'
 
-            display_text = f"[{b['num_tag']}]  {b['name']}" if b.get("num_tag") else b["name"]
+            # Display name (include group prefix if in flattened view and inside group)
+            display_name = b["name"]
+            if flatten_hierarchy and b.get("group_name"):
+                display_name = f"{b['group_name']} > {b['name']}"
+
+            display_text = f"[{b['num_tag']}]  {display_name}" if b.get("num_tag") else display_name
 
             if not is_conn:
                 display_text += " [Disc]"

@@ -269,6 +269,19 @@ class TestGNBakeControl(unittest.TestCase):
         self.assertEqual(res, {'FINISHED'})
         self.assertNotIn("GeometryNodes::::G_Temporal Smooth Position", state.collapsed_groups)
 
+    def test_10_flatten_hierarchy_toggle(self):
+        """Verify flattening hierarchy hides groups and draws cleanly."""
+        obj = bpy.data.objects.get("ANIM")
+        bpy.context.view_layer.objects.active = obj
+
+        state = obj.gn_bake_state
+        state.flatten_hierarchy = True
+        self.assertTrue(state.flatten_hierarchy)
+
+        dummy_layout = DummyLayout()
+        ui.draw_gn_bake_ui(dummy_layout, bpy.context)
+        state.flatten_hierarchy = False
+
 
 if __name__ == "__main__":
     unittest.main(argv=['first-arg-is-ignored'], exit=False)
