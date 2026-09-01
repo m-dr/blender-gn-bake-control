@@ -1,5 +1,5 @@
 import bpy
-from bpy.types import PropertyGroup
+from bpy.types import PropertyGroup, Operator
 from bpy.props import BoolProperty, IntProperty, StringProperty, CollectionProperty, PointerProperty
 
 
@@ -60,11 +60,22 @@ class GNBakeObjectState(PropertyGroup):
     )
 
 
-def get_or_create_bake_setting(obj, modifier_name, bake_id, node_name=""):
-    """Lookup or initialize settings PropertyGroup for a specific bake item on an object."""
-    state = getattr(obj, "gn_bake_state", None)
-    if not state:
+def find_bake_setting(obj, modifier_name, bake_id):
+    """Read-only lookup for setting PropertyGroup. Safe to call inside UI draw()."""
+    if not obj or not hasattr(obj, "gn_bake_state"):
         return None
+    state = obj.gn_bake_state
+    for item in state.items:
+        if item.bake_id == bake_id and item.modifier_name == modifier_name:
+            return item
+    return None
+
+
+def ensure_bake_setting(obj, modifier_name, bake_id, node_name=""):
+    """Lookup or initialize settings PropertyGroup. MUST only be called outside UI draw (operators/handlers)."""
+    if not obj or not hasattr(obj, "gn_bake_state"):
+        return None
+    state = obj.gn_bake_state
 
     # Search existing
     for item in state.items:
@@ -81,9 +92,39 @@ def get_or_create_bake_setting(obj, modifier_name, bake_id, node_name=""):
     return item
 
 
+def is_bake_selected(obj, modifier_name, bake_id):
+    """Check if item is selected (defaults to True if not yet in state)."""
+    setting = find_bake_setting(obj, modifier_name, bake_id)
+    if setting is not None:
+        return setting.is_selected
+    return True
+
+
+class OBJECT_OT_gn_bake_toggle_item(Operator):
+    bl_idname = "object.gn_bake_toggle_item"
+    bl_label = "Toggle Selection"
+    bl_description = "Toggle inclusion of this bake node in batch operations"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    modifier_name: StringProperty(name="Modifier Name", default="")
+    bake_id: IntProperty(name="Bake ID", default=0)
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj:
+            return {'CANCELLED'}
+
+        setting = ensure_bake_setting(obj, self.modifier_name, self.bake_id)
+        if setting:
+            setting.is_selected = not setting.is_selected
+
+        return {'FINISHED'}
+
+
 classes = (
     GNBakeNodeItemSetting,
     GNBakeObjectState,
+    OBJECT_OT_gn_bake_toggle_item,
 )
 
 

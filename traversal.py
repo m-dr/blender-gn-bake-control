@@ -1,5 +1,5 @@
 import bpy
-from .properties import get_or_create_bake_setting
+from .properties import find_bake_setting
 
 
 def get_bake_nodes_in_tree(node_tree, prefix=""):
@@ -52,8 +52,6 @@ def bake_has_cache(bake_item):
     try:
         if hasattr(bake_item, "data_blocks") and len(bake_item.data_blocks) > 0:
             return True
-        # For disk caches or packed items where data_blocks collection might not list immediately,
-        # we can also check if directory is set or if cache files exist
         if getattr(bake_item, "bake_target", "") == 'DISK' and getattr(bake_item, "directory", ""):
             import os
             cache_dir = bpy.path.abspath(bake_item.directory)
@@ -68,6 +66,7 @@ def get_object_bake_items(obj, filter_text="", missing_only=False):
     """
     Traverse all Geometry Nodes modifiers on the object in stack order.
     Returns a list of dicts with all metadata, sorted topologically.
+    Safe to call during Panel.draw() without modifying ID data.
     """
     if not obj or not hasattr(obj, "modifiers"):
         return []
@@ -104,7 +103,7 @@ def get_object_bake_items(obj, filter_text="", missing_only=False):
                     if ft not in display_name.lower() and ft not in mod.name.lower():
                         continue
 
-                setting = get_or_create_bake_setting(obj, mod.name, b_item.bake_id, node.name)
+                setting = find_bake_setting(obj, mod.name, b_item.bake_id)
 
                 items.append({
                     "object": obj,
@@ -139,7 +138,7 @@ def get_object_bake_items(obj, filter_text="", missing_only=False):
                 if ft not in label.lower() and ft not in mod.name.lower():
                     continue
 
-            setting = get_or_create_bake_setting(obj, mod.name, b_item.bake_id, node_name)
+            setting = find_bake_setting(obj, mod.name, b_item.bake_id)
 
             items.append({
                 "object": obj,

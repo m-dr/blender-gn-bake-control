@@ -4,6 +4,7 @@ from bpy.props import EnumProperty, BoolProperty, StringProperty, IntProperty
 from contextlib import contextmanager
 
 from .traversal import get_object_bake_items
+from .properties import find_bake_setting, ensure_bake_setting, is_bake_selected
 from .preferences import get_preferences
 
 
@@ -81,8 +82,8 @@ class OBJECT_OT_gn_bake_batch(Operator):
         # Filter jobs
         jobs = []
         for item in raw_items:
-            setting = item.get("setting")
-            if self.selected_only and setting and not setting.is_selected:
+            selected = is_bake_selected(obj, item["modifier_name"], item["bake_id"])
+            if self.selected_only and not selected:
                 continue
             jobs.append(item)
 
@@ -246,13 +247,7 @@ class OBJECT_OT_gn_bake_single_action(Operator):
                     return {'CANCELLED'}
 
         if self.action in {'BAKE', 'REBAKE'}:
-            # Check for custom still frame setting
-            setting = None
-            if hasattr(obj, "gn_bake_state"):
-                for s in obj.gn_bake_state.items:
-                    if s.bake_id == self.bake_id and s.modifier_name == self.modifier_name:
-                        setting = s
-                        break
+            setting = find_bake_setting(obj, self.modifier_name, self.bake_id)
 
             had_frame_change = False
             if bake_item.bake_mode == 'STILL' and setting and setting.use_custom_still_frame:
@@ -301,7 +296,7 @@ class OBJECT_OT_gn_bake_select_all(Operator):
 
         items = get_object_bake_items(obj)
         for item in items:
-            setting = item.get("setting")
+            setting = ensure_bake_setting(obj, item["modifier_name"], item["bake_id"], item["node_name"])
             if setting:
                 if self.action == 'ALL':
                     setting.is_selected = True

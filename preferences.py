@@ -20,7 +20,7 @@ class GNBakeControlPreferences(AddonPreferences):
     category: StringProperty(
         name="Sidebar Tab Name",
         description="Category tab name for the 3D Viewport sidebar panel",
-        default="GN Bake",
+        default="GN Bake (DEV)",
     )
 
     auto_restore_frame: BoolProperty(
@@ -47,10 +47,25 @@ class GNBakeControlPreferences(AddonPreferences):
 def get_preferences(context=None):
     if context is None:
         context = bpy.context
-    addon_name = __package__ if __package__ else "gn_bake_control"
-    addon = context.preferences.addons.get(addon_name)
-    if addon:
-        return addon.preferences
+
+    pkg = __package__ if __package__ else ""
+    candidates = [
+        pkg,
+        "bl_ext.vscode_development.gn_bake_control",
+        "bl_ext.user_default.gn_bake_control",
+        "gn_bake_control",
+    ]
+    if pkg and "." in pkg:
+        # e.g. bl_ext.vscode_development.gn_bake_control
+        parts = pkg.split(".")
+        if len(parts) >= 3:
+            candidates.insert(0, ".".join(parts[:3]))
+
+    for name in candidates:
+        if name and name in context.preferences.addons:
+            addon = context.preferences.addons[name]
+            if addon and addon.preferences:
+                return addon.preferences
     return None
 
 
