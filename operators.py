@@ -28,6 +28,7 @@ def find_group_chain(current_tree, target_tree, visited=None):
 
 
 class OBJECT_OT_gn_bake_navigate_to(Operator):
+    # TODO: Fix node editor navigation/framing across nested spaces (marked as pending/broken for future rework)
     bl_idname = "object.gn_bake_navigate_to"
     bl_label = "Navigate to Node"
     bl_description = "Focus, navigate to, and frame this modifier or bake node in the Geometry Node Editor"
@@ -39,7 +40,6 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
     group_chain_json: StringProperty(name="Group Chain JSON", default="[]")
 
     def execute(self, context):
-        import json
         obj = context.active_object
         if not obj:
             return {'CANCELLED'}
@@ -220,6 +220,156 @@ class OBJECT_OT_gn_bake_single_action(Operator):
             return {'CANCELLED'}
 
 
+class OBJECT_OT_gn_bake_batch_action(Operator):
+    bl_idname = "object.gn_bake_batch_action"
+    bl_label = "GN Bake Batch Action"
+    bl_description = "Execute batch bake or clear operations across bake nodes in topological dependency order"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    action: EnumProperty(
+        name="Action",
+        items=[
+            ('REBAKE_STALE', "Rebake Stale", "Re-bake all stale bake nodes in topological dependency order"),
+            ('CLEAR_STALE', "Clear Stale", "Clear cache for all stale bake nodes"),
+            ('BAKE_ALL', "Bake All", "Bake all active connected nodes in topological dependency order"),
+            ('CLEAR_ALL', "Clear All", "Clear cache for all bake nodes on this object"),
+        ],
+        default='REBAKE_STALE'
+    )
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj:
+            self.report({'ERROR'}, "No active object selected.")
+            return {'CANCELLED'}
+
+        from .traversal import get_object_bake_list
+        mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=True)
+        if not mod_data:
+            self.report({'INFO'}, "No Geometry Nodes bakes found on active object.")
+            return {'FINISHED'}
+
+        state = getattr(obj, "gn_bake_state", None)
+
+        if self.action == 'REBAKE_STALE':
+            stale_items = []
+            for m in mod_data:
+                m_name = m["modifier_name"]
+                for b in m["bakes"]:
+                    if not b.get("is_group") and b.get("is_connected") and not b.get("is_muted") and b.get("cache_state") == 'STALE' and b.get("bake_id"):
+                        stale_items.append((m_name, b.get("bake_id"), b.get("name")))
+
+            if not stale_items:
+                self.report({'INFO'}, "No stale bake nodes found to rebake.")
+                return {'FINISHED'}
+
+            baked_count = 0
+            for m_name, bake_id, b_name in stale_items:
+                try:
+                    bpy.ops.object.geometry_node_bake_single(
+                        session_uid=obj.session_uid,
+                        modifier_name=m_name,
+                        bake_id=bake_id
+                    )
+                    if state:
+                        state.set_bake_timestamp(m_name, bake_id)
+                    baked_count += 1
+                except Exception as e:
+                    self.report({'WARNING'}, f"Failed baking {b_name}: {e}")
+
+            self.report({'INFO'}, f"Successfully rebaked {baked_count} stale bake node(s).")
+            return {'FINISHED'}
+
+        elif self.action == 'CLEAR_STALE':
+            stale_items = []
+            for m in mod_data:
+                m_name = m["modifier_name"]
+                for b in m["bakes"]:
+                    if not b.get("is_group") and b.get("cache_state") == 'STALE' and b.get("bake_id"):
+                        stale_items.append((m_name, b.get("bake_id"), b.get("name")))
+
+            if not stale_items:
+                self.report({'INFO'}, "No stale bake nodes found to clear.")
+                return {'FINISHED'}
+
+            cleared_count = 0
+            for m_name, bake_id, b_name in stale_items:
+                try:
+                    bpy.ops.object.geometry_node_bake_delete_single(
+                        session_uid=obj.session_uid,
+                        modifier_name=m_name,
+                        bake_id=bake_id
+                    )
+                    if state:
+                        state.clear_bake_timestamp(m_name, bake_id)
+                    cleared_count += 1
+                except Exception as e:
+                    self.report({'WARNING'}, f"Failed clearing {b_name}: {e}")
+
+            self.report({'INFO'}, f"Cleared cache for {cleared_count} stale bake node(s).")
+            return {'FINISHED'}
+
+        elif self.action == 'BAKE_ALL':
+            target_items = []
+            for m in mod_data:
+                m_name = m["modifier_name"]
+                for b in m["bakes"]:
+                    if not b.get("is_group") and b.get("is_connected") and not b.get("is_muted") and b.get("bake_id"):
+                        target_items.append((m_name, b.get("bake_id"), b.get("name")))
+
+            if not target_items:
+                self.report({'INFO'}, "No active connected bake nodes found.")
+                return {'FINISHED'}
+
+            baked_count = 0
+            for m_name, bake_id, b_name in target_items:
+                try:
+                    bpy.ops.object.geometry_node_bake_single(
+                        session_uid=obj.session_uid,
+                        modifier_name=m_name,
+                        bake_id=bake_id
+                    )
+                    if state:
+                        state.set_bake_timestamp(m_name, bake_id)
+                    baked_count += 1
+                except Exception as e:
+                    self.report({'WARNING'}, f"Failed baking {b_name}: {e}")
+
+            self.report({'INFO'}, f"Successfully baked {baked_count} node(s) in dependency order.")
+            return {'FINISHED'}
+
+        elif self.action == 'CLEAR_ALL':
+            cached_items = []
+            for m in mod_data:
+                m_name = m["modifier_name"]
+                for b in m["bakes"]:
+                    if not b.get("is_group") and b.get("has_cache") and b.get("bake_id"):
+                        cached_items.append((m_name, b.get("bake_id"), b.get("name")))
+
+            if not cached_items:
+                self.report({'INFO'}, "No cached bake nodes found to clear.")
+                return {'FINISHED'}
+
+            cleared_count = 0
+            for m_name, bake_id, b_name in cached_items:
+                try:
+                    bpy.ops.object.geometry_node_bake_delete_single(
+                        session_uid=obj.session_uid,
+                        modifier_name=m_name,
+                        bake_id=bake_id
+                    )
+                    if state:
+                        state.clear_bake_timestamp(m_name, bake_id)
+                    cleared_count += 1
+                except Exception as e:
+                    self.report({'WARNING'}, f"Failed clearing {b_name}: {e}")
+
+            self.report({'INFO'}, f"Cleared cache for {cleared_count} bake node(s).")
+            return {'FINISHED'}
+
+        return {'FINISHED'}
+
+
 class OBJECT_OT_gn_bake_toggle_group(Operator):
     bl_idname = "object.gn_bake_toggle_group"
     bl_label = "Toggle Group Collapse"
@@ -250,6 +400,7 @@ class OBJECT_OT_gn_bake_toggle_group(Operator):
 classes = (
     OBJECT_OT_gn_bake_navigate_to,
     OBJECT_OT_gn_bake_single_action,
+    OBJECT_OT_gn_bake_batch_action,
     OBJECT_OT_gn_bake_toggle_group,
 )
 

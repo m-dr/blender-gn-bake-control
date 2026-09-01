@@ -33,7 +33,7 @@ def draw_gn_bake_ui(layout, context):
 
     mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=show_disconnected)
 
-    # Toolbar row with Filter and Flatten Hierarchy toggles
+    # 1. Toolbar row with Filter and Flatten Hierarchy toggles
     row_tools = layout.row(align=True)
     if state:
         row_tools.prop(
@@ -48,6 +48,22 @@ def draw_gn_bake_ui(layout, context):
             text="Flatten",
             icon='ALIGN_JUSTIFY' if state.flatten_hierarchy else 'OUTLINER'
         )
+
+    # 2. Batch Operations row: Rebake Stale, Clear Stale, (Re)bake All, Clear All
+    row_batch = layout.row(align=True)
+    row_batch.scale_y = 1.05
+
+    op_rebake_stale = row_batch.operator("object.gn_bake_batch_action", text="Rebake Stale", icon='FILE_REFRESH')
+    op_rebake_stale.action = 'REBAKE_STALE'
+
+    op_clear_stale = row_batch.operator("object.gn_bake_batch_action", text="Clear Stale", icon='TRASH')
+    op_clear_stale.action = 'CLEAR_STALE'
+
+    op_bake_all = row_batch.operator("object.gn_bake_batch_action", text="(Re)bake All", icon='RENDER_STILL')
+    op_bake_all.action = 'BAKE_ALL'
+
+    op_clear_all = row_batch.operator("object.gn_bake_batch_action", text="Clear All", icon='TRASH')
+    op_clear_all.action = 'CLEAR_ALL'
 
     if not mod_data:
         box = layout.box()
@@ -114,8 +130,6 @@ def draw_gn_bake_ui(layout, context):
             if b.get("is_group"):
                 grp_row = box.row(align=True)
                 grp_row.scale_y = 0.85
-                if is_selected:
-                    grp_row.alert = True
 
                 if not is_conn or is_muted:
                     grp_row.active = False
@@ -138,6 +152,10 @@ def draw_gn_bake_ui(layout, context):
                 grp_label = f"[{b['num_tag']}]  {b['name']}" + (" [Muted]" if is_muted else "")
                 grp_row.label(text=grp_label, icon=grp_icon)
 
+                # Active selection indicator icon if group node is selected in editor
+                if is_selected:
+                    grp_row.label(text="", icon='RESTRICT_SELECT_OFF')
+
                 op_grp_nav = grp_row.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
                 op_grp_nav.modifier_name = mod_name
                 op_grp_nav.node_tree_name = b.get("tree_name", "")
@@ -148,7 +166,7 @@ def draw_gn_bake_ui(layout, context):
                     skip_below_depth = depth
                 continue
 
-            # 2. Node Item Row (Zero vertical shift highlight)
+            # 2. Node Item Row
             row = box.row(align=True)
             row.scale_y = 0.9
 
@@ -157,8 +175,6 @@ def draw_gn_bake_ui(layout, context):
 
             # Proportional split: Left (Indentation + Status + Jump + Stage/Node), Right (Frame + Bake + Clear)
             split = row.split(factor=0.58, align=True)
-            if is_selected:
-                split.alert = True
 
             # Left section (dimmed visually if muted or disconnected)
             left = split.row(align=True)
@@ -205,7 +221,7 @@ def draw_gn_bake_ui(layout, context):
 
             left.label(text=display_text, icon=node_icon)
 
-            # Active selection indicator icon if selected in editor
+            # Active selection indicator icon if selected in editor (native theme arrow icon only)
             if is_selected:
                 left.label(text="", icon='RESTRICT_SELECT_OFF')
 

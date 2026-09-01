@@ -314,6 +314,24 @@ class TestGNBakeControl(unittest.TestCase):
         self.assertEqual(b_downstream2["status_icon"], 'CHECKMARK')
 
 
+    def test_12_batch_bake_actions(self):
+        """Verify batch bake operators execute successfully."""
+        obj = bpy.data.objects.get("ANIM")
+        bpy.context.view_layer.objects.active = obj
+        
+        # Test CLEAR_STALE
+        res1 = bpy.ops.object.gn_bake_batch_action(action='CLEAR_STALE')
+        self.assertEqual(res1, {'FINISHED'})
+        
+        # Test CLEAR_ALL
+        res2 = bpy.ops.object.gn_bake_batch_action(action='CLEAR_ALL')
+        self.assertEqual(res2, {'FINISHED'})
+        
+        # Test BAKE_ALL
+        res3 = bpy.ops.object.gn_bake_batch_action(action='BAKE_ALL')
+        self.assertEqual(res3, {'FINISHED'})
+
+
 if __name__ == "__main__":
     unittest.main(argv=['first-arg-is-ignored'], exit=False)
 
