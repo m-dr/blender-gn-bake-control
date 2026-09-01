@@ -53,79 +53,44 @@ def draw_gn_bake_ui(layout, context):
         op_mod_nav = head.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
         op_mod_nav.modifier_name = mod_name
 
-        current_group_box = None
-        current_group_name = None
-
-        # Track sibling stages for visual grouping
-        current_stage_box = None
-        current_stage_id = None
-
-        # Group items by base stage prefix for sibling nesting
-        # e.g. "1.1" and "1.2" have base stage "1"
-        stage_counts = {}
+        # Outliner-style continuous hierarchical tree
         for b in bakes:
-            if not b.get("is_group"):
-                tag = b.get("num_tag", "")
-                parts = tag.split(".")
-                if len(parts) >= 2:
-                    base_stage = ".".join(parts[:-1])
-                    stage_counts[base_stage] = stage_counts.get(base_stage, 0) + 1
-
-        for b in bakes:
-            # Handle Group Header items
-            if b.get("is_group"):
-                current_group_name = b.get("name")
-                current_group_box = box.box()
-                grp_head = current_group_box.row(align=True)
-                grp_head.label(text=f"[{b['num_tag']}]  {b['name']}", icon='NODETREE')
-                op_grp_nav = grp_head.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
-                op_grp_nav.modifier_name = mod_name
-                op_grp_nav.node_tree_name = b.get("tree_name", "")
-                op_grp_nav.node_name = b.get("node_name", "")
-                current_stage_box = None
-                current_stage_id = None
-                continue
-
-            group_name = b.get("group_name", "")
-            if not group_name:
-                current_group_box = None
-                current_group_name = None
-
-            parent_box = current_group_box if (current_group_box and group_name) else box
-
-            # Check if this item belongs to a multi-sibling parallel branch stage
-            tag = b.get("num_tag", "")
-            parts = tag.split(".")
-            base_stage = ".".join(parts[:-1]) if len(parts) >= 2 else None
-
-            if base_stage and stage_counts.get(base_stage, 0) > 1:
-                # Sibling branch stage
-                if current_stage_id != base_stage:
-                    current_stage_id = base_stage
-                    current_stage_box = parent_box.box()
-                    # Optional subtle branch stage label
-                    branch_head = current_stage_box.row(align=True)
-                    branch_head.label(text=f"Branch Stage [{base_stage}] ({stage_counts[base_stage]} Parallel Inputs)", icon='CON_FOLLOWPATH')
-                target_container = current_stage_box
-            else:
-                current_stage_id = None
-                current_stage_box = None
-                target_container = parent_box
-
-            row = target_container.row(align=True)
-
+            depth = b.get("depth", 0)
             is_conn = b.get("is_connected", True)
             is_muted = b.get("is_muted", False)
 
-            # Dim row only if disconnected (muted nodes remain fully active for baking per Blender behavior)
+            # 1. Group Folder Header Row
+            if b.get("is_group"):
+                grp_row = box.row(align=True)
+                if not is_conn:
+                    grp_row.active = False
+
+                # Indentation for nesting depth
+                for _ in range(depth):
+                    grp_row.label(text="", icon='BLANK1')
+
+                grp_row.label(text=f"[{b['num_tag']}]  {b['name']}", icon='NODETREE')
+
+                op_grp_nav = grp_row.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
+                op_grp_nav.modifier_name = mod_name
+                op_grp_nav.node_tree_name = b.get("tree_name", "")
+                op_grp_nav.node_name = b.get("node_name", "")
+                continue
+
+            # 2. Node Item Row
+            row = box.row(align=True)
             if not is_conn:
                 row.active = False
 
-            # Proportional split: Left (Status + Jump + Stage/Node), Right (Frame + Bake + Clear)
+            # Proportional split: Left (Indentation + Status + Jump + Stage/Node), Right (Frame + Bake + Clear)
             split = row.split(factor=0.58, align=True)
 
             # Left section
             left = split.row(align=True)
+
+            # Indentation for multi-level nesting
+            for _ in range(depth):
+                left.label(text="", icon='BLANK1')
 
             # Cache status indicator
             icon = 'CHECKMARK' if b["has_cache"] else 'RADIOBUT_OFF'

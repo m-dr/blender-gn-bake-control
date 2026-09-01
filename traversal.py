@@ -50,7 +50,7 @@ def node_tree_has_bakes(node_tree, visited=None):
     return False
 
 
-def compute_tree_bake_stages(node_tree, prefix_stage="", group_hierarchy=None, is_parent_connected=True, is_parent_muted=False):
+def compute_tree_bake_stages(node_tree, prefix_stage="", depth=0, group_hierarchy=None, is_parent_connected=True, is_parent_muted=False):
     """
     Compute DAG longest-path topological execution stages and hierarchical number tags (e.g. 1.1, 1.2, 2, 2.1, 3).
     Returns (connected_items, disconnected_items).
@@ -122,6 +122,7 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", group_hierarchy=None, i
 
     connected_items = []
     max_stage = max(by_stage.keys()) if by_stage else 0
+    total_stages = len(by_stage)
 
     for stage_num in sorted(by_stage.keys()):
         stage_nodes = by_stage[stage_num]
@@ -130,9 +131,14 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", group_hierarchy=None, i
 
         for idx, node in enumerate(stage_nodes, 1):
             if prefix_stage:
-                num_tag = f"{prefix_stage}.{stage_num}" if not has_siblings else f"{prefix_stage}.{stage_num}.{idx}"
+                if total_stages == 1:
+                    # Single internal stage in sub-group: append sibling index directly
+                    num_tag = f"{prefix_stage}.{idx}" if has_siblings else f"{prefix_stage}.1"
+                else:
+                    # Multiple internal stages in sub-group
+                    num_tag = f"{prefix_stage}.{stage_num}.{idx}" if has_siblings else f"{prefix_stage}.{stage_num}"
             else:
-                num_tag = f"{stage_num}" if not has_siblings else f"{stage_num}.{idx}"
+                num_tag = f"{stage_num}.{idx}" if has_siblings else f"{stage_num}"
 
             name = node.label if node.label else node.name
             node_muted = is_parent_muted or bool(getattr(node, "mute", False))
@@ -142,6 +148,7 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", group_hierarchy=None, i
                     "name": name,
                     "num_tag": num_tag,
                     "group_name": " > ".join(group_hierarchy) if group_hierarchy else "",
+                    "depth": depth,
                     "node": node,
                     "tree": node_tree,
                     "is_group": False,
@@ -154,6 +161,7 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", group_hierarchy=None, i
                 sub_conn, sub_dis = compute_tree_bake_stages(
                     node.node_tree,
                     prefix_stage=num_tag,
+                    depth=depth + 1,
                     group_hierarchy=group_hierarchy + [group_name],
                     is_parent_connected=is_parent_connected,
                     is_parent_muted=node_muted,
@@ -162,6 +170,7 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", group_hierarchy=None, i
                     "name": group_name,
                     "num_tag": num_tag,
                     "group_name": " > ".join(group_hierarchy) if group_hierarchy else "",
+                    "depth": depth,
                     "node": node,
                     "tree": node_tree,
                     "is_group": True,
@@ -187,6 +196,7 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", group_hierarchy=None, i
             "name": name,
             "num_tag": num_tag,
             "group_name": " > ".join(group_hierarchy) if group_hierarchy else "",
+            "depth": depth,
             "node": dn,
             "tree": node_tree,
             "is_group": False,
@@ -219,7 +229,7 @@ def check_bake_has_cache(bake_item):
 def get_object_bake_list(obj, scene=None, show_disconnected=True):
     """
     Return all modifiers and their bake nodes in hierarchical DAG execution sequence
-    with number badges ([1.1], [1.2], [2], [2.1], [3]), group encapsulation, and metadata.
+    with number badges ([1.1], [1.2], [2], [2.1], [3]), group encapsulation, depth, and metadata.
     """
     if not obj or not hasattr(obj, "modifiers"):
         return []
@@ -276,6 +286,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "name": item["name"],
                 "num_tag": item.get("num_tag", ""),
                 "group_name": item.get("group_name", ""),
+                "depth": item.get("depth", 0),
                 "node_name": node.name if node else "",
                 "tree_name": item["tree"].name if item.get("tree") else "",
                 "bake_id": b_item.bake_id if b_item else 0,
@@ -312,6 +323,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "name": node_name,
                 "num_tag": f"{next_idx}",
                 "group_name": "",
+                "depth": 0,
                 "node_name": node.name if node else "",
                 "tree_name": mod.node_group.name if mod.node_group else "",
                 "bake_id": b_item.bake_id,
@@ -328,7 +340,6 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
         all_mod_bakes = connected_bakes + (disconnected_bakes if show_disconnected else [])
 
         if all_mod_bakes:
-            # Count only actual bake items (not group headers)
             actual_conn = [b for b in connected_bakes if not b.get("is_group")]
             actual_dis = [b for b in disconnected_bakes if not b.get("is_group")]
 
