@@ -11,11 +11,11 @@ def draw_gn_bake_ui(layout, context):
         layout.label(text="Select an object to inspect bakes", icon='INFO')
         return
 
-    mod_data = get_object_bake_list(obj)
+    mod_data = get_object_bake_list(obj, scene=context.scene)
 
     if not mod_data:
         box = layout.box()
-        box.label(text="No Geometry Nodes bake nodes on object.", icon='INFO')
+        box.label(text="No active Geometry Nodes bake nodes on object.", icon='INFO')
         return
 
     for entry in mod_data:
@@ -26,9 +26,9 @@ def draw_gn_bake_ui(layout, context):
         # Modifier header
         head = box.row(align=True)
         head.label(text=f"{mod_name}", icon='NODETREE')
-        head.label(text=f"({len(bakes)} {'Bake' if len(bakes) == 1 else 'Bakes'})")
+        head.label(text=f"({len(bakes)} {'Active Bake' if len(bakes) == 1 else 'Active Bakes'})")
 
-        # List each bake node
+        # List each bake node with details
         for b in bakes:
             row = box.row(align=True)
             # Status icon
@@ -40,6 +40,9 @@ def draw_gn_bake_ui(layout, context):
 
             # Mode badge
             row.label(text=f"[{b['mode']}]")
+
+            # Frame range / still frame info
+            row.label(text=b["frame_info"], icon='TIME')
 
 
 class DATA_PT_gn_bake_control(Panel):
