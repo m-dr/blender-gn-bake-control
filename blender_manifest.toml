@@ -1,0 +1,20 @@
+schema_version = "1.0.0"
+
+id = "gn_bake_control"
+version = "0.1.0"
+name = "GN Bake Control"
+tagline = "Traverse, batch bake, and manage Geometry Nodes bake items in execution order"
+maintainer = "MD <m-dr>"
+type = "add-on"
+blender_version_min = "5.2.0"
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+tags = [
+  "Geometry Nodes",
+  "Bake",
+  "Simulation",
+  "Pipeline",
+  "User Interface",
+]
+website = "https://github.com/m-dr/blender-gn-bake-control"
