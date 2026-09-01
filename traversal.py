@@ -481,26 +481,28 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             if mode == 'STILL':
                 if state and state.static_bake_mode == 'ORIGINAL':
                     target_f = rec_frame if rec_frame is not None else scene_frame_current
-                    target_frame_info = f"{target_f}"
+                    target_frame_info = f"{target_f} (Orig)"
                     target_frame_tooltip = f"Original frame policy: Target frame {target_f}"
                 elif state and state.static_bake_mode == 'GLOBAL':
-                    target_frame_info = f"{state.static_global_frame}"
-                    target_frame_tooltip = f"Global frame policy: Target frame {state.static_global_frame}"
+                    target_f = state.static_global_frame
+                    target_frame_info = f"{target_f} (Cust)"
+                    target_frame_tooltip = f"Custom global frame policy: Target frame {target_f}"
                 else:
-                    target_frame_info = f"{scene_frame_current}"
-                    target_frame_tooltip = f"Current frame policy: Target active timeline frame {scene_frame_current}"
-                target_start_f = scene_frame_current
-                target_end_f = scene_frame_current
+                    target_f = scene_frame_current
+                    target_frame_info = f"{target_f} (Curr)"
+                    target_frame_tooltip = f"Current frame policy: Target active timeline frame {target_f}"
+                target_start_f = target_f
+                target_end_f = target_f
             else:
                 if b_item and getattr(b_item, "use_custom_simulation_frame_range", False):
                     target_start_f = b_item.frame_start
                     target_end_f = b_item.frame_end
-                    target_frame_info = f"{target_start_f} – {target_end_f}"
+                    target_frame_info = f"{target_start_f} – {target_end_f} (Cust)"
                     target_frame_tooltip = f"Custom range set in node settings: {target_start_f} to {target_end_f}"
                 else:
                     target_start_f = scene_frame_start
                     target_end_f = scene_frame_end
-                    target_frame_info = f"{target_start_f} – {target_end_f}"
+                    target_frame_info = f"{target_start_f} – {target_end_f} (Scene)"
                     target_frame_tooltip = f"Scene timeline range: {target_start_f} to {target_end_f}"
 
             # 2. Currently Baked Range (actual files on disk/cache)

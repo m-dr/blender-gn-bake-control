@@ -49,6 +49,7 @@
 
 ### Phase 1: Core Node Parameter Controls & UI Parity *(Top Priority)*
 Expose full control for all native Geometry Nodes bake parameters directly in the add-on interface (via popovers and inline controls):
+- **Compact Target Mode Indicators**: The `Target` column clearly and compactly communicates the active target policy for both static (`Current Frame` vs `Custom/Original Frame`) and animated (`Scene Range` vs `Custom Range`) bakes.
 - **Custom Time Range Popover**: Configure animation/simulation start & end frame ranges per bake node directly via a compact popup dialog.
 - **Per-Node & Batch Custom Range Toggles**: Toggle custom frame range on/off per individual node or in bulk across all nodes.
 - **Batch Time Range Management**: Batch set or offset custom frame ranges across multiple bake nodes simultaneously.
