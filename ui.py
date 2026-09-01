@@ -4,6 +4,7 @@ from bpy.types import Panel
 
 from .traversal import get_object_bake_list
 from .preferences import get_preferences
+from .operators import ACTIVE_BATCH_STATE
 
 
 def draw_gn_bake_ui(layout, context):
@@ -19,6 +20,9 @@ def draw_gn_bake_ui(layout, context):
     show_target_range = state.show_target_range if state else True
     show_stats = state.show_stats if state else False
     collapsed_groups = set(state.collapsed_groups.split(";")) if (state and state.collapsed_groups) else set()
+
+    is_batch_baking = bool(ACTIVE_BATCH_STATE.get("is_baking") and ACTIVE_BATCH_STATE.get("object_name") == obj.name)
+    batch_status = ACTIVE_BATCH_STATE.get("status", {}) if is_batch_baking else {}
 
     # Detect active selected node in Node Editor space
     active_editor_node = None
@@ -225,8 +229,18 @@ def draw_gn_bake_ui(layout, context):
             for _ in range(depth):
                 left.label(text="", icon='BLANK1')
 
-            # 3-State cache status indicator (UNBAKED: RADIOBUT_OFF, BAKED: CHECKMARK, STALE: FILE_REFRESH)
-            icon = b.get("status_icon", 'CHECKMARK' if b.get("has_cache") else 'RADIOBUT_OFF')
+            # 4-State cache status indicator (UNBAKED: RADIOBUT_OFF, INTERRUPTED: CANCEL, STALE: FILE_REFRESH, BAKED: CHECKMARK)
+            if is_batch_baking and bake_id in batch_status:
+                b_st = batch_status[bake_id]
+                if b_st == 'PENDING':
+                    icon = 'TIME'
+                elif b_st == 'CURRENT':
+                    icon = 'RESTRICT_SELECT_OFF'
+                else:
+                    icon = 'CHECKMARK'
+            else:
+                icon = b.get("status_icon", 'RADIOBUT_OFF')
+
             left.label(text="", icon=icon)
 
             # Compact right arrow navigate & frame node button

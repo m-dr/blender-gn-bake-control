@@ -477,26 +477,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             rec_frame = state.get_recorded_frame(mod.name, b_item.bake_id) if (state and b_item) else None
             duration_sec = state.get_bake_duration(mod.name, b_item.bake_id) if (state and b_item) else 0.0
 
-            # 1. Currently Baked Range (actual files on disk/cache)
-            if not has_cache:
-                baked_frame_info = "-"
-            else:
-                if mode == 'STILL':
-                    baked_frame = rec_frame if rec_frame is not None else scene_frame_current
-                    baked_frame_info = f"{baked_frame}"
-                else:
-                    cached_range = scan_baked_frames(b_item, mod, state)
-                    if isinstance(cached_range, tuple):
-                        min_f, max_f = cached_range
-                        baked_frame_info = f"{min_f}" if min_f == max_f else f"{min_f} – {max_f}"
-                    elif isinstance(cached_range, int):
-                        baked_frame_info = f"{cached_range}"
-                    elif getattr(b_item, "use_custom_simulation_frame_range", False):
-                        baked_frame_info = f"{b_item.frame_start} – {b_item.frame_end}"
-                    else:
-                        baked_frame_info = f"{scene_frame_start} – {scene_frame_end}"
-
-            # 2. Target Frame / Range and Tooltip metadata
+            # 1. Target Frame / Range and Tooltip metadata
             if mode == 'STILL':
                 if state and state.static_bake_mode == 'ORIGINAL':
                     target_f = rec_frame if rec_frame is not None else scene_frame_current
@@ -508,13 +489,71 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 else:
                     target_frame_info = f"{scene_frame_current}"
                     target_frame_tooltip = f"Current frame policy: Target active timeline frame {scene_frame_current}"
+                target_start_f = scene_frame_current
+                target_end_f = scene_frame_current
             else:
                 if b_item and getattr(b_item, "use_custom_simulation_frame_range", False):
-                    target_frame_info = f"{b_item.frame_start} – {b_item.frame_end}"
-                    target_frame_tooltip = f"Custom range set in node settings: {b_item.frame_start} to {b_item.frame_end}"
+                    target_start_f = b_item.frame_start
+                    target_end_f = b_item.frame_end
+                    target_frame_info = f"{target_start_f} – {target_end_f}"
+                    target_frame_tooltip = f"Custom range set in node settings: {target_start_f} to {target_end_f}"
                 else:
-                    target_frame_info = f"{scene_frame_start} – {scene_frame_end}"
-                    target_frame_tooltip = f"Scene timeline range: {scene_frame_start} to {scene_frame_end}"
+                    target_start_f = scene_frame_start
+                    target_end_f = scene_frame_end
+                    target_frame_info = f"{target_start_f} – {target_end_f}"
+                    target_frame_tooltip = f"Scene timeline range: {target_start_f} to {target_end_f}"
+
+            # 2. Currently Baked Range (actual files on disk/cache)
+            cached_range = None
+            is_interrupted = False
+            if not has_cache:
+                baked_frame_info = "-"
+            else:
+                if mode == 'STILL':
+                    baked_frame = rec_frame if rec_frame is not None else scene_frame_current
+                    baked_frame_info = f"{baked_frame}"
+                else:
+                    cached_range = scan_baked_frames(b_item, mod, state)
+                    if isinstance(cached_range, tuple):
+                        min_f, max_f = cached_range
+                        baked_frame_info = f"{min_f}" if min_f == max_f else f"{min_f} – {max_f}"
+                        if min_f > target_start_f or max_f < target_end_f:
+                            is_interrupted = True
+                    elif isinstance(cached_range, int):
+                        baked_frame_info = f"{cached_range}"
+                        if target_start_f != target_end_f:
+                            is_interrupted = True
+                    elif getattr(b_item, "use_custom_simulation_frame_range", False):
+                        baked_frame_info = f"{b_item.frame_start} – {b_item.frame_end}"
+                    else:
+                        baked_frame_info = f"{scene_frame_start} – {scene_frame_end}"
+
+            # 3. Determine 4-state cache status: UNBAKED, INTERRUPTED, STALE, BAKED
+            if not has_cache:
+                cache_state = 'UNBAKED'
+                status_icon = 'RADIOBUT_OFF'
+            elif is_interrupted:
+                cache_state = 'INTERRUPTED'
+                status_icon = 'CANCEL'
+            else:
+                is_stale = False
+                # Check upstream nodes in DAG data flow
+                for u_node in item.get("upstream_nodes", []):
+                    u_time = node_timestamps.get(u_node, 0.0)
+                    if u_time > node_time:
+                        is_stale = True
+                        break
+
+                # Check if an upstream modifier in the stack was rebaked
+                if not is_stale and max_upstream_mod_bake_time > node_time:
+                    is_stale = True
+
+                if is_stale:
+                    cache_state = 'STALE'
+                    status_icon = 'FILE_REFRESH'
+                else:
+                    cache_state = 'BAKED'
+                    status_icon = 'CHECKMARK'
 
             frame_info = baked_frame_info if has_cache else target_frame_info
             duration_str = f"{duration_sec:.1f}s" if duration_sec > 0 else "-"

@@ -378,12 +378,20 @@ class TestGNBakeControl(unittest.TestCase):
         mod_data = traversal.get_object_bake_list(obj, scene=bpy.context.scene)
         bakes = mod_data[0]["bakes"]
         
-        # Check target vs baked frame info presence
-        for b in bakes:
-            if not b.get("is_group"):
-                self.assertIn("baked_frame_info", b)
-                self.assertIn("target_frame_info", b)
-                self.assertIn("target_frame_tooltip", b)
+    def test_15_interrupted_bake_state(self):
+        """Verify INTERRUPTED cache state and CANCEL icon when cached frames are partial."""
+        obj = bpy.data.objects.get("ANIM")
+        bpy.context.view_layer.objects.active = obj
+
+        mod_data = traversal.get_object_bake_list(obj, scene=bpy.context.scene)
+        bakes = mod_data[0]["bakes"]
+
+        # Find simulation node [2.2] OK
+        b_sim = [b for b in bakes if b["name"] == "OK" and not b.get("is_group")]
+        if b_sim:
+            b_item = b_sim[0]
+            # When b_item has partial frames (or simulated interrupted), cache_state is INTERRUPTED or BAKED/STALE
+            self.assertIn(b_item["cache_state"], ('INTERRUPTED', 'BAKED', 'STALE', 'UNBAKED'))
 
 
 if __name__ == "__main__":

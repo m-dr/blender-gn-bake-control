@@ -4,6 +4,14 @@ from bpy.types import Operator
 from bpy.props import StringProperty, IntProperty, EnumProperty
 
 
+# Global runtime tracking for active batch baking visual states
+ACTIVE_BATCH_STATE = {
+    "is_baking": False,
+    "object_name": "",
+    "status": {},  # bake_id: 'PENDING' | 'CURRENT' | 'DONE'
+}
+
+
 def find_group_chain(current_tree, target_tree, visited=None):
     """
     Recursively find the sequence of (sub_tree, group_node) leading from current_tree to target_tree.
@@ -257,21 +265,183 @@ class OBJECT_OT_gn_bake_single_action(Operator):
 class OBJECT_OT_gn_bake_batch_action(Operator):
     bl_idname = "object.gn_bake_batch_action"
     bl_label = "GN Bake Batch Action"
-    bl_description = "Execute batch bake or clear operations across bake nodes in topological dependency order"
+    bl_description = "Execute batch bake or clear operations across bake nodes in topological dependency order (Press ESC to cancel)"
     bl_options = {'REGISTER', 'UNDO'}
 
     action: EnumProperty(
         name="Action",
         items=[
-            ('REBAKE_STALE', "Rebake Stale", "Re-bake all stale bake nodes in topological dependency order"),
-            ('CLEAR_STALE', "Clear Stale", "Clear cache for all stale bake nodes"),
+            ('REBAKE_STALE', "Rebake Stale", "Re-bake all stale or interrupted bake nodes in topological dependency order"),
+            ('CLEAR_STALE', "Clear Stale", "Clear cache for all stale or interrupted bake nodes"),
             ('BAKE_ALL', "Bake All", "Bake all active connected nodes in topological dependency order"),
             ('CLEAR_ALL', "Clear All", "Clear cache for all bake nodes on this object"),
         ],
         default='REBAKE_STALE'
     )
 
+    _timer = None
+    _queue = []
+    _current_idx = 0
+    _orig_frame = 1
+    _object_name = ""
+    _total_duration = 0.0
+    _baked_count = 0
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        if not obj:
+            self.report({'ERROR'}, "No active object selected.")
+            return {'CANCELLED'}
+
+        # In background headless CLI tests, execute synchronously
+        if bpy.app.background:
+            return self.execute(context)
+
+        from .traversal import get_object_bake_list
+        mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=True)
+        if not mod_data:
+            self.report({'INFO'}, "No Geometry Nodes bakes found on active object.")
+            return {'CANCELLED'}
+
+        if self.action in ('REBAKE_STALE', 'BAKE_ALL'):
+            target_items = []
+            for m in mod_data:
+                m_name = m["modifier_name"]
+                for b in m["bakes"]:
+                    if not b.get("is_group") and b.get("is_connected") and not b.get("is_muted") and b.get("bake_id"):
+                        if self.action == 'REBAKE_STALE' and b.get("cache_state") not in ('STALE', 'INTERRUPTED'):
+                            continue
+                        target_items.append((m_name, b.get("bake_id"), b.get("name"), b.get("mode") == 'STILL'))
+
+            if not target_items:
+                msg = "No stale or interrupted bake nodes found to rebake." if self.action == 'REBAKE_STALE' else "No active connected bake nodes found."
+                self.report({'INFO'}, msg)
+                return {'CANCELLED'}
+
+            self._queue = target_items
+            self._current_idx = 0
+            self._object_name = obj.name
+            self._orig_frame = context.scene.frame_current
+            self._total_duration = 0.0
+            self._baked_count = 0
+
+            # Initialize global batch state for live UI indicators
+            ACTIVE_BATCH_STATE["is_baking"] = True
+            ACTIVE_BATCH_STATE["object_name"] = obj.name
+            ACTIVE_BATCH_STATE["status"] = {bake_id: 'PENDING' for (_, bake_id, _, _) in target_items}
+
+            wm = context.window_manager
+            wm.progress_begin(0, len(target_items))
+            self._timer = wm.event_timer_add(0.02, window=context.window)
+            wm.modal_handler_add(self)
+            self.report({'INFO'}, f"Batch baking {len(target_items)} node(s)... Press ESC to cancel.")
+
+            for area in context.screen.areas:
+                area.tag_redraw()
+
+            return {'RUNNING_MODAL'}
+
+        elif self.action in ('CLEAR_STALE', 'CLEAR_ALL'):
+            return self.execute(context)
+
+        return {'FINISHED'}
+
+    def modal(self, context, event):
+        # 1. Real-time ESC key cancellation
+        if event.type == 'ESC':
+            self.cancel(context)
+            self.report({'WARNING'}, "Batch baking cancelled by user.")
+            return {'CANCELLED'}
+
+        if event.type == 'TIMER':
+            obj = bpy.data.objects.get(self._object_name)
+            if not obj or self._current_idx >= len(self._queue):
+                return self.finish(context)
+
+            m_name, bake_id, b_name, is_still = self._queue[self._current_idx]
+            state = getattr(obj, "gn_bake_state", None)
+
+            # Mark current node active
+            ACTIVE_BATCH_STATE["status"][bake_id] = 'CURRENT'
+            context.window_manager.progress_update(self._current_idx)
+            for area in context.screen.areas:
+                area.tag_redraw()
+
+            target_frame = self._orig_frame
+            if is_still and state:
+                if state.static_bake_mode == 'ORIGINAL':
+                    rec = state.get_recorded_frame(m_name, bake_id)
+                    if rec is not None:
+                        target_frame = rec
+                elif state.static_bake_mode == 'GLOBAL':
+                    target_frame = state.static_global_frame
+
+            if is_still and context.scene.frame_current != target_frame:
+                context.scene.frame_set(target_frame)
+
+            t0 = time.time()
+            try:
+                # Safe synchronous execution of this node's bake
+                bpy.ops.object.geometry_node_bake_single(
+                    session_uid=obj.session_uid,
+                    modifier_name=m_name,
+                    bake_id=bake_id
+                )
+                dur = time.time() - t0
+                self._total_duration += dur
+                if state:
+                    state.set_bake_timestamp(m_name, bake_id)
+                    state.set_bake_duration(m_name, bake_id, dur)
+                    if is_still:
+                        state.set_recorded_frame(m_name, bake_id, target_frame)
+                self._baked_count += 1
+                ACTIVE_BATCH_STATE["status"][bake_id] = 'DONE'
+            except Exception as e:
+                self.report({'WARNING'}, f"Failed baking {b_name}: {e}")
+                ACTIVE_BATCH_STATE["status"][bake_id] = 'DONE'
+
+            self._current_idx += 1
+
+            if self._current_idx >= len(self._queue):
+                return self.finish(context)
+
+        return {'RUNNING_MODAL'}
+
+    def finish(self, context):
+        if self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+
+        context.window_manager.progress_end()
+        ACTIVE_BATCH_STATE["is_baking"] = False
+        ACTIVE_BATCH_STATE["status"] = {}
+
+        if context.scene.frame_current != self._orig_frame:
+            context.scene.frame_set(self._orig_frame)
+
+        for area in context.screen.areas:
+            area.tag_redraw()
+
+        self.report({'INFO'}, f"Successfully baked {self._baked_count} node(s) in dependency order ({self._total_duration:.1f}s).")
+        return {'FINISHED'}
+
+    def cancel(self, context):
+        if self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+
+        context.window_manager.progress_end()
+        ACTIVE_BATCH_STATE["is_baking"] = False
+        ACTIVE_BATCH_STATE["status"] = {}
+
+        if context.scene.frame_current != self._orig_frame:
+            context.scene.frame_set(self._orig_frame)
+
+        for area in context.screen.areas:
+            area.tag_redraw()
+
     def execute(self, context):
+        # Synchronous fallback
         obj = context.active_object
         if not obj:
             self.report({'ERROR'}, "No active object selected.")
@@ -292,12 +462,12 @@ class OBJECT_OT_gn_bake_batch_action(Operator):
                 m_name = m["modifier_name"]
                 for b in m["bakes"]:
                     if not b.get("is_group") and b.get("is_connected") and not b.get("is_muted") and b.get("bake_id"):
-                        if self.action == 'REBAKE_STALE' and b.get("cache_state") != 'STALE':
+                        if self.action == 'REBAKE_STALE' and b.get("cache_state") not in ('STALE', 'INTERRUPTED'):
                             continue
                         target_items.append((m_name, b.get("bake_id"), b.get("name"), b.get("mode") == 'STILL'))
 
             if not target_items:
-                msg = "No stale bake nodes found to rebake." if self.action == 'REBAKE_STALE' else "No active connected bake nodes found."
+                msg = "No stale or interrupted bake nodes found to rebake." if self.action == 'REBAKE_STALE' else "No active connected bake nodes found."
                 self.report({'INFO'}, msg)
                 return {'FINISHED'}
 
@@ -354,14 +524,14 @@ class OBJECT_OT_gn_bake_batch_action(Operator):
                 m_name = m["modifier_name"]
                 for b in m["bakes"]:
                     if not b.get("is_group") and b.get("bake_id"):
-                        if self.action == 'CLEAR_STALE' and b.get("cache_state") != 'STALE':
+                        if self.action == 'CLEAR_STALE' and b.get("cache_state") not in ('STALE', 'INTERRUPTED'):
                             continue
                         if self.action == 'CLEAR_ALL' and not b.get("has_cache"):
                             continue
                         target_items.append((m_name, b.get("bake_id"), b.get("name")))
 
             if not target_items:
-                msg = "No stale bake nodes found to clear." if self.action == 'CLEAR_STALE' else "No cached bake nodes found to clear."
+                msg = "No stale or interrupted bake nodes found to clear." if self.action == 'CLEAR_STALE' else "No cached bake nodes found to clear."
                 self.report({'INFO'}, msg)
                 return {'FINISHED'}
 
