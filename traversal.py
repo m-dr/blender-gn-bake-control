@@ -1,9 +1,8 @@
 import bpy
-from .properties import find_bake_setting
 
 
-def get_bake_nodes_in_tree(node_tree, prefix=""):
-    """Traverse a node tree topologically and recursively yield (prefix, label, node, node_tree)."""
+def find_bake_nodes_in_tree(node_tree, prefix=""):
+    """Recursively find all bake nodes in a node tree topologically."""
     if not node_tree:
         return []
 
@@ -15,7 +14,6 @@ def get_bake_nodes_in_tree(node_tree, prefix=""):
             adj[link.from_node].append(link.to_node)
             in_degree[link.to_node] += 1
 
-    # Roots: in_degree == 0, sorted by X location left-to-right, then top-to-bottom
     queue = [n for n, deg in in_degree.items() if deg == 0]
     queue.sort(key=lambda n: (n.location.x, -n.location.y))
 
@@ -29,133 +27,86 @@ def get_bake_nodes_in_tree(node_tree, prefix=""):
                 queue.append(neighbor)
         queue.sort(key=lambda n: (n.location.x, -n.location.y))
 
-    # Catch any cyclic or unconnected nodes
     for n in node_tree.nodes:
         if n not in ordered_nodes:
             ordered_nodes.append(n)
 
-    bakes = []
+    results = []
     for node in ordered_nodes:
-        curr_label = node.label if node.label else node.name
+        name = node.label if node.label else node.name
         if node.type == 'BAKE':
-            bakes.append((prefix, curr_label, node, node_tree))
-        elif node.type == 'GROUP' and getattr(node, 'node_tree', None):
-            sub_prefix = f"{prefix}{curr_label} > " if prefix else f"{curr_label} > "
-            sub_bakes = get_bake_nodes_in_tree(node.node_tree, prefix=sub_prefix)
-            bakes.extend(sub_bakes)
+            path = f"{prefix}{name}" if prefix else name
+            results.append({
+                "name": name,
+                "path": path,
+                "node": node,
+                "tree": node_tree,
+            })
+        elif node.type == 'GROUP' and getattr(node, "node_tree", None):
+            sub_prefix = f"{prefix}{name} > " if prefix else f"{name} > "
+            results.extend(find_bake_nodes_in_tree(node.node_tree, prefix=sub_prefix))
 
-    return bakes
-
-
-def bake_has_cache(bake_item):
-    """Check if bake item has cached data."""
-    try:
-        if hasattr(bake_item, "data_blocks") and len(bake_item.data_blocks) > 0:
-            return True
-        if getattr(bake_item, "bake_target", "") == 'DISK' and getattr(bake_item, "directory", ""):
-            import os
-            cache_dir = bpy.path.abspath(bake_item.directory)
-            if os.path.exists(cache_dir) and os.listdir(cache_dir):
-                return True
-    except Exception:
-        pass
-    return False
+    return results
 
 
-def get_object_bake_items(obj, filter_text="", missing_only=False):
-    """
-    Traverse all Geometry Nodes modifiers on the object in stack order.
-    Returns a list of dicts with all metadata, sorted topologically.
-    Safe to call during Panel.draw() without modifying ID data.
-    """
+def get_object_bake_list(obj):
+    """Return a clean list of modifiers and all their bake nodes for the active object."""
     if not obj or not hasattr(obj, "modifiers"):
         return []
 
-    items = []
+    modifiers_data = []
     for mod in obj.modifiers:
-        if mod.type != 'NODES' or not mod.node_group or not hasattr(mod, "bakes"):
+        if mod.type != 'NODES' or not mod.node_group:
             continue
 
-        # Map nodes to bake items in modifier
-        bake_item_by_node = {}
-        bake_items_unmapped = list(mod.bakes)
+        # Map nodes to modifier bakes collection
+        bakes_collection = list(getattr(mod, "bakes", []))
+        bake_by_node = {b.node: b for b in bakes_collection if getattr(b, "node", None)}
+        unmapped_bakes = list(bakes_collection)
 
-        for b in mod.bakes:
-            if b.node:
-                bake_item_by_node[b.node] = b
+        tree_bakes = find_bake_nodes_in_tree(mod.node_group)
+        mod_items = []
 
-        # Topological traversal of node tree
-        ordered_tree_bakes = get_bake_nodes_in_tree(mod.node_group)
-
-        for prefix, label, node, ntree in ordered_tree_bakes:
-            b_item = bake_item_by_node.get(node)
+        for item in tree_bakes:
+            node = item["node"]
+            b_item = bake_by_node.get(node)
             if b_item:
-                if b_item in bake_items_unmapped:
-                    bake_items_unmapped.remove(b_item)
+                if b_item in unmapped_bakes:
+                    unmapped_bakes.remove(b_item)
 
-                has_cached_data = bake_has_cache(b_item)
-                if missing_only and has_cached_data:
-                    continue
-
-                display_name = f"{prefix}{label}" if prefix else label
-                if filter_text:
-                    ft = filter_text.lower()
-                    if ft not in display_name.lower() and ft not in mod.name.lower():
-                        continue
-
-                setting = find_bake_setting(obj, mod.name, b_item.bake_id)
-
-                items.append({
-                    "object": obj,
-                    "modifier": mod,
-                    "modifier_name": mod.name,
-                    "bake_item": b_item,
-                    "bake_id": b_item.bake_id,
-                    "node": node,
+                has_cache = bool(getattr(b_item, "data_blocks", None) and len(b_item.data_blocks) > 0)
+                mod_items.append({
+                    "name": item["name"],
+                    "path": item["path"],
                     "node_name": node.name,
-                    "node_label": label,
-                    "group_path": prefix.rstrip(" > "),
-                    "display_name": display_name,
-                    "node_tree": ntree,
-                    "bake_mode": b_item.bake_mode,
-                    "has_cache": has_cached_data,
-                    "setting": setting,
-                    "is_simulation": False,
+                    "tree_name": item["tree"].name if item["tree"] else "",
+                    "bake_id": b_item.bake_id,
+                    "mode": getattr(b_item, "bake_mode", "STILL"),
+                    "has_cache": has_cache,
                 })
 
-        # Append any remaining unmapped bakes (e.g., simulation zone bakes)
-        for b_item in bake_items_unmapped:
+        # Include any remaining bakes (e.g. simulation zone outputs)
+        for b_item in unmapped_bakes:
             node = getattr(b_item, "node", None)
-            node_name = node.name if node else f"Bake_{b_item.bake_id}"
-            label = node.label if (node and node.label) else node_name
-
-            has_cached_data = bake_has_cache(b_item)
-            if missing_only and has_cached_data:
-                continue
-
-            if filter_text:
-                ft = filter_text.lower()
-                if ft not in label.lower() and ft not in mod.name.lower():
-                    continue
-
-            setting = find_bake_setting(obj, mod.name, b_item.bake_id)
-
-            items.append({
-                "object": obj,
-                "modifier": mod,
-                "modifier_name": mod.name,
-                "bake_item": b_item,
+            node_name = node.label if (node and node.label) else (node.name if node else f"Bake #{b_item.bake_id}")
+            has_cache = bool(getattr(b_item, "data_blocks", None) and len(b_item.data_blocks) > 0)
+            mod_items.append({
+                "name": node_name,
+                "path": node_name,
+                "node_name": node.name if node else "",
+                "tree_name": mod.node_group.name if mod.node_group else "",
                 "bake_id": b_item.bake_id,
-                "node": node,
-                "node_name": node_name,
-                "node_label": label,
-                "group_path": "",
-                "display_name": label,
-                "node_tree": mod.node_group,
-                "bake_mode": b_item.bake_mode,
-                "has_cache": has_cached_data,
-                "setting": setting,
-                "is_simulation": getattr(node, "type", "") == 'SIMULATION_OUTPUT' or "sim" in node_name.lower(),
+                "mode": getattr(b_item, "bake_mode", "STILL"),
+                "has_cache": has_cache,
             })
 
-    return items
+        if mod_items:
+            modifiers_data.append({
+                "modifier_name": mod.name,
+                "bakes": mod_items,
+            })
+
+    return modifiers_data
+
+
+get_object_bake_items = get_object_bake_list
