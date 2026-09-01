@@ -43,32 +43,39 @@
 3. Click the dropdown menu in the top right and choose **Install from Disk...**.
 4. Select the `.zip` package.
 
-## Roadmap
+## Roadmap (Prioritized)
 
-### 1. Granular Frame & Range Controls
-- **Custom Range Popover**: Configure custom animation/simulation start and end frame ranges per bake node using a compact popup dialog.
-- **Per-Node Custom Range Toggles**: Toggle custom frame range on/off directly from each row in the UI.
-- **Batch Range Management**:
-  - Batch apply/offset custom start and end frame ranges across selected or all nodes.
-  - Batch toggle custom frame range modes on or off.
-- **Per-Node Static Frame Overrides**: Adjust custom static target frames per individual static bake item directly from the list.
+> **Design Principle**: All UI draw routines and data lookups must remain strictly **lazy and lightweight**, ensuring zero viewport lag, minimal Python overhead, and high responsiveness even on massive node trees.
 
-### 2. Cache Storage, Packing & Node Settings Parity
-- **Full Node Settings Parity**: Expose all native bake node settings (generation settings, attributes, custom paths) in the add-on UI.
-- **Pack & Unpack Controls**: Inspect, pack, and unpack bake caches directly from the list.
-- **Batch Storage Mode Switching**: Batch toggle between `Disk` and `Packed` (internal) cache storage across modifiers and nodes.
-- **Default Storage Policy**: Option to automatically force modifiers to use the `Disk` caching method by default.
+### Phase 1: Core Node Parameter Controls & UI Parity *(Top Priority)*
+Expose full control for all native Geometry Nodes bake parameters directly in the add-on interface (via popovers and inline controls):
+- **Custom Time Range Popover**: Configure animation/simulation start & end frame ranges per bake node directly via a compact popup dialog.
+- **Per-Node & Batch Custom Range Toggles**: Toggle custom frame range on/off per individual node or in bulk across all nodes.
+- **Batch Time Range Management**: Batch set or offset custom frame ranges across multiple bake nodes simultaneously.
+- **Per-Node Static Frame Overrides**: Set custom target frames per static bake item directly from the list.
+- **Pack & Unpack Controls**: Direct UI controls for inspecting, packing, and unpacking individual bake caches.
+- **Storage Target Switching**: Batch switch between `Disk` and `Packed` (internal) cache storage across modifiers and nodes.
+- **Default Storage Policy**: Global preference to automatically enforce the `Disk` caching method on newly created or traversed modifiers.
+- **Full Settings Parity**: Expose generation settings, sub-frame step sampling, and attribute bake filters.
 
-### 3. Path Management & Smart Cache Lifecycle
-- **Path Conflict Resolution**: Automatically discover and resolve conflicting cache paths between modifiers and bake nodes.
-- **Batch Path Regeneration**: Batch clear/reset custom bake paths so new unique directories are generated, preventing accidental overwriting of caches from previous `.blend` file versions.
-- **Smart Obsolete Cache Cleanup**:
-  - Detect and safely clean up orphaned/obsolete cache files from older `.blend` file version increments.
-  - Object-specific matching to strictly guarantee cache files belonging to other objects in the same project are never touched.
+### Phase 2: Cache Lifecycle, Path Conflicts & Navigation *(High Priority)*
+- **Path Conflict Detection & Resolution**: Identify and resolve overlapping or conflicting cache directories between different modifiers or nodes.
+- **Batch Path Regeneration**: Batch clear and regenerate custom bake paths to prevent accidental cache overwriting across `.blend` version increments.
+- **Smart Obsolete Cache Cleanup**: Scan disk folders to clean up orphaned cache files from older `.blend` version increments, with strict object-matching to safeguard other objects' caches.
+- **Nested Node Editor Navigation**: Robust cross-hierarchy jumping and framing across deeply nested node groups and modifier spaces.
 
-### 4. Navigation & Graph Overview
-- **Nested Node Editor Navigation**: Robust cross-hierarchy jumping and framing into deeply nested node groups and modifier spaces.
-- **Scene-Wide Dependency Overview**: Scene-level overview across all objects and modifiers in the scene.
+### Phase 3: Production Diagnostics & Safety *(Medium Priority)*
+- **Pre-Render Safety Hook (`render_pre`)**: Automated pre-flight check when triggering `F12` / `Ctrl+F12` to warn against unbaked or stale simulation nodes, with an optional auto-rebake option.
+- **Disk Storage Footprint Monitoring**: Display disk cache sizes per node (e.g. `120 MB`, `3.2 GB`) and a total cache size summary for the active object.
+- **"Open Folder in Explorer"**: 1-click button to jump directly into the node's disk cache folder.
+- **Cache Health & Integrity Check**: Quick verification to detect missing or corrupt `.blob` sequence files.
+
+### Phase 4: Advanced Studio Workflows & Background Baking *(Future Polish)*
+- **Background / Headless Process Baking**: Spawn detached background Blender CLI worker processes (`blender -b`) for massive simulations without locking the interactive session.
+- **Cache Iterations & Snapshots**: Save, name, and switch between multiple bake snapshots (`v1`, `v2`, `v3`) for parameter comparison without destroying previous runs.
+- **Smart Node Auto-Naming**: Auto-label generic bake nodes based on upstream connected groups (e.g. `Bake [Point Repulsion]`).
+- **Batch Finish Notifications**: OS desktop notifications or audio chimes on long batch bake completion.
+- **Scene-Wide Master Overview**: Centralized multi-object overview displaying all Geometry Nodes bakes across the entire scene.
 
 ---
 
