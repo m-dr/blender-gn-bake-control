@@ -43,6 +43,33 @@
 3. Click the dropdown menu in the top right and choose **Install from Disk...**.
 4. Select the `.zip` package.
 
+## Roadmap
+
+### 1. Granular Frame & Range Controls
+- **Custom Range Popover**: Configure custom animation/simulation start and end frame ranges per bake node using a compact popup dialog.
+- **Per-Node Custom Range Toggles**: Toggle custom frame range on/off directly from each row in the UI.
+- **Batch Range Management**:
+  - Batch apply/offset custom start and end frame ranges across selected or all nodes.
+  - Batch toggle custom frame range modes on or off.
+- **Per-Node Static Frame Overrides**: Adjust custom static target frames per individual static bake item directly from the list.
+
+### 2. Cache Storage, Packing & Node Settings Parity
+- **Full Node Settings Parity**: Expose all native bake node settings (generation settings, attributes, custom paths) in the add-on UI.
+- **Pack & Unpack Controls**: Inspect, pack, and unpack bake caches directly from the list.
+- **Batch Storage Mode Switching**: Batch toggle between `Disk` and `Packed` (internal) cache storage across modifiers and nodes.
+- **Default Storage Policy**: Option to automatically force modifiers to use the `Disk` caching method by default.
+
+### 3. Path Management & Smart Cache Lifecycle
+- **Path Conflict Resolution**: Automatically discover and resolve conflicting cache paths between modifiers and bake nodes.
+- **Batch Path Regeneration**: Batch clear/reset custom bake paths so new unique directories are generated, preventing accidental overwriting of caches from previous `.blend` file versions.
+- **Smart Obsolete Cache Cleanup**:
+  - Detect and safely clean up orphaned/obsolete cache files from older `.blend` file version increments.
+  - Object-specific matching to strictly guarantee cache files belonging to other objects in the same project are never touched.
+
+### 4. Navigation & Graph Overview
+- **Nested Node Editor Navigation**: Robust cross-hierarchy jumping and framing into deeply nested node groups and modifier spaces.
+- **Scene-Wide Dependency Overview**: Scene-level overview across all objects and modifiers in the scene.
+
 ---
 
 ## License
