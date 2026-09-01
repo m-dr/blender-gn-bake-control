@@ -158,12 +158,12 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             mode = getattr(b_item, "bake_mode", "ANIMATION" if item.get("is_simulation") else "STILL")
 
             if mode == 'STILL':
-                frame_info = f"Still: Frame {scene_frame_current}"
+                frame_info = f"Frame {scene_frame_current}"
             else:
                 if b_item and getattr(b_item, "use_custom_simulation_frame_range", False):
-                    frame_info = f"Range: {b_item.frame_start}..{b_item.frame_end} (Custom)"
+                    frame_info = f"{b_item.frame_start} – {b_item.frame_end} (Cust)"
                 else:
-                    frame_info = f"Range: {scene_frame_start}..{scene_frame_end} (Scene)"
+                    frame_info = f"{scene_frame_start} – {scene_frame_end}"
 
             return {
                 "name": item["name"],
@@ -191,12 +191,12 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             mode = getattr(b_item, "bake_mode", "STILL")
 
             if mode == 'STILL':
-                frame_info = f"Still: Frame {scene_frame_current}"
+                frame_info = f"Frame {scene_frame_current}"
             else:
                 if getattr(b_item, "use_custom_simulation_frame_range", False):
-                    frame_info = f"Range: {b_item.frame_start}..{b_item.frame_end} (Custom)"
+                    frame_info = f"{b_item.frame_start} – {b_item.frame_end} (Cust)"
                 else:
-                    frame_info = f"Range: {scene_frame_start}..{scene_frame_end} (Scene)"
+                    frame_info = f"{scene_frame_start} – {scene_frame_end}"
 
             disconnected_items.append({
                 "name": node_name,

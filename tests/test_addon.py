@@ -21,9 +21,12 @@ class DummyLayout:
         self.scale_y = 1.0
         self.enabled = True
         self.active = True
+        self.alignment = 'LEFT'
     def row(self, align=False):
         return DummyLayout()
     def column(self, align=False):
+        return DummyLayout()
+    def split(self, factor=0.0, align=False):
         return DummyLayout()
     def box(self):
         return DummyLayout()
