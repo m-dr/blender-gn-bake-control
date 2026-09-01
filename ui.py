@@ -306,10 +306,10 @@ def draw_gn_bake_ui(layout, context):
             # Layout sub-split configurations:
             if show_baked_range and show_target_range and show_stats:
                 c_b = right.split(factor=0.28, align=True)
-                c_b.label(text=baked_text, icon='IMAGE_DATA' if (is_still and baked_text != "-") else 'NONE')
+                c_b.label(text=baked_text)
 
                 c_t = c_b.split(factor=0.38, align=True)
-                c_t.label(text=target_text, icon='IMAGE_DATA' if is_still else 'NONE')
+                c_t.label(text=target_text)
 
                 c_ops = c_t.split(factor=0.50, align=True)
                 draw_ops(c_ops)
@@ -320,17 +320,17 @@ def draw_gn_bake_ui(layout, context):
 
             elif show_baked_range and show_target_range and not show_stats:
                 c_b = right.split(factor=0.33, align=True)
-                c_b.label(text=baked_text, icon='IMAGE_DATA' if (is_still and baked_text != "-") else 'NONE')
+                c_b.label(text=baked_text)
 
                 c_t = c_b.split(factor=0.48, align=True)
-                c_t.label(text=target_text, icon='IMAGE_DATA' if is_still else 'NONE')
+                c_t.label(text=target_text)
 
                 c_ops = c_t.row(align=True)
                 draw_ops(c_ops)
 
             elif show_baked_range and not show_target_range and show_stats:
                 c_b = right.split(factor=0.38, align=True)
-                c_b.label(text=baked_text, icon='IMAGE_DATA' if (is_still and baked_text != "-") else 'NONE')
+                c_b.label(text=baked_text)
 
                 c_ops = c_b.split(factor=0.58, align=True)
                 draw_ops(c_ops)
@@ -341,7 +341,7 @@ def draw_gn_bake_ui(layout, context):
 
             elif not show_baked_range and show_target_range and show_stats:
                 c_t = right.split(factor=0.38, align=True)
-                c_t.label(text=target_text, icon='IMAGE_DATA' if is_still else 'NONE')
+                c_t.label(text=target_text)
 
                 c_ops = c_t.split(factor=0.58, align=True)
                 draw_ops(c_ops)
@@ -352,14 +352,14 @@ def draw_gn_bake_ui(layout, context):
 
             elif show_baked_range and not show_target_range and not show_stats:
                 c_b = right.split(factor=0.45, align=True)
-                c_b.label(text=baked_text, icon='IMAGE_DATA' if (is_still and baked_text != "-") else 'NONE')
+                c_b.label(text=baked_text)
 
                 c_ops = c_b.row(align=True)
                 draw_ops(c_ops)
 
             elif not show_baked_range and show_target_range and not show_stats:
                 c_t = right.split(factor=0.45, align=True)
-                c_t.label(text=target_text, icon='IMAGE_DATA' if is_still else 'NONE')
+                c_t.label(text=target_text)
 
                 c_ops = c_t.row(align=True)
                 draw_ops(c_ops)
