@@ -356,6 +356,12 @@ class TestGNBakeControl(unittest.TestCase):
         self.assertEqual(state.static_bake_mode, 'GLOBAL')
         self.assertEqual(state.static_global_frame, 50)
         
+        # Test frame range toggle
+        state.show_frame_range = False
+        self.assertFalse(state.show_frame_range)
+        state.show_frame_range = True
+        self.assertTrue(state.show_frame_range)
+        
         dummy_layout = DummyLayout()
         ui.draw_gn_bake_ui(dummy_layout, bpy.context)
 

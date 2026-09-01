@@ -21,6 +21,11 @@ class GNBakeObjectState(PropertyGroup):
         description="Show bake timing and performance statistics",
         default=False,
     )
+    show_frame_range: BoolProperty(
+        name="Show Frame Info",
+        description="Show or hide frame numbers / range column",
+        default=True,
+    )
     static_bake_mode: EnumProperty(
         name="Static Bake Frame",
         description="Target frame policy when (re)baking static still bakes",

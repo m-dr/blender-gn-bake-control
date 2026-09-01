@@ -419,7 +419,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 else:
                     frame_info = f"{scene_frame_start} – {scene_frame_end}"
 
-            duration_str = f"{duration_sec:.2f}s" if duration_sec > 0 else "-"
+            duration_str = f"{duration_sec:.1f}s" if duration_sec > 0 else "-"
 
             return {
                 "name": item["name"],
@@ -493,7 +493,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 else:
                     frame_info = f"{scene_frame_start} – {scene_frame_end}"
 
-            duration_str = f"{duration_sec:.2f}s" if duration_sec > 0 else "-"
+            duration_str = f"{duration_sec:.1f}s" if duration_sec > 0 else "-"
 
             next_idx = max_root_stage + len(disconnected_bakes) + 1
             disconnected_bakes.append({
