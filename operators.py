@@ -37,8 +37,10 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
     modifier_name: StringProperty(name="Modifier Name", default="")
     node_tree_name: StringProperty(name="Node Tree Name", default="")
     node_name: StringProperty(name="Node Name", default="")
+    group_chain_json: StringProperty(name="Group Chain JSON", default="[]")
 
     def execute(self, context):
+        import json
         obj = context.active_object
         if not obj:
             return {'CANCELLED'}
@@ -69,6 +71,18 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
             self.report({'WARNING'}, "No node tree found to navigate to.")
             return {'CANCELLED'}
 
+        chain = []
+        try:
+            if self.group_chain_json:
+                chain = json.loads(self.group_chain_json)
+        except Exception:
+            chain = []
+
+        if not chain and ntree and ntree != root_tree:
+            chain_tuples = find_group_chain(root_tree, ntree)
+            if chain_tuples:
+                chain = [(t.name, n.name) for t, n in chain_tuples]
+
         # 3. Find and update all Node Editor spaces in active screen
         found_node_editor = False
 
@@ -89,17 +103,26 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
                 space.tree_type = 'GeometryNodeTree'
                 space.node_tree = root_tree
 
-                # Build sub-group breadcrumb path if target is a sub-group
-                if ntree and ntree != root_tree:
-                    chain = find_group_chain(root_tree, ntree)
-                    if chain:
-                        for sub_tree, g_node in chain:
-                            try:
-                                space.path.append(sub_tree, node=g_node)
-                            except Exception:
-                                pass
+                # Build sub-group breadcrumb path
+                curr_tree = root_tree
+                for item in chain:
+                    if isinstance(item, (list, tuple)) and len(item) == 2:
+                        sub_tree_name, g_node_name = item
+                    elif isinstance(item, str):
+                        sub_tree_name, g_node_name = item, ""
+                    else:
+                        continue
 
-                active_tree = ntree if ntree else root_tree
+                    sub_tree = bpy.data.node_groups.get(sub_tree_name)
+                    g_node = curr_tree.nodes.get(g_node_name) if (curr_tree and g_node_name) else None
+                    if sub_tree:
+                        try:
+                            space.path.append(sub_tree, node=g_node)
+                            curr_tree = sub_tree
+                        except Exception:
+                            pass
+
+                active_tree = curr_tree if curr_tree else (ntree if ntree else root_tree)
 
                 if self.node_name and active_tree:
                     target_node = active_tree.nodes.get(self.node_name)

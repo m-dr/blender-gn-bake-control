@@ -1,3 +1,4 @@
+import json
 import bpy
 from bpy.types import Panel
 
@@ -15,6 +16,20 @@ def draw_gn_bake_ui(layout, context):
     show_disconnected = state.show_disconnected if state else True
     flatten_hierarchy = state.flatten_hierarchy if state else False
     collapsed_groups = set(state.collapsed_groups.split(";")) if (state and state.collapsed_groups) else set()
+
+    # Detect active selected node in Node Editor space
+    active_editor_node = None
+    active_editor_tree = None
+    if hasattr(context, "screen") and context.screen:
+        for area in context.screen.areas:
+            if area.type == 'NODE_EDITOR':
+                sp = area.spaces.active
+                if sp and sp.node_tree:
+                    curr_t = sp.path[-1].node_tree if (hasattr(sp, "path") and len(sp.path) > 0 and getattr(sp.path[-1], "node_tree", None)) else sp.node_tree
+                    if curr_t and getattr(curr_t.nodes, "active", None):
+                        active_editor_tree = curr_t
+                        active_editor_node = curr_t.nodes.active
+                break
 
     mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=show_disconnected)
 
@@ -72,6 +87,15 @@ def draw_gn_bake_ui(layout, context):
             depth = 0 if flatten_hierarchy else b.get("depth", 0)
             is_conn = b.get("is_connected", True)
             is_muted = b.get("is_muted", False)
+            node = b.get("node")
+            tree = b.get("tree")
+
+            # Check if this node is actively selected in Node Editor
+            is_selected = bool(
+                node and active_editor_node and node == active_editor_node and
+                (tree == active_editor_tree or not active_editor_tree) and
+                getattr(node, "select", False)
+            )
 
             # Skip children of collapsed groups when in hierarchical view
             if not flatten_hierarchy and skip_below_depth is not None:
@@ -84,9 +108,15 @@ def draw_gn_bake_ui(layout, context):
             full_key = f"{mod_name}::{group_key}"
             is_collapsed = full_key in collapsed_groups
 
+            chain_json = json.dumps(b.get("group_chain", []))
+
             # 1. Group Folder Header Row (Hierarchical view only)
             if b.get("is_group"):
-                grp_row = box.row(align=True)
+                if is_selected:
+                    grp_box = box.box()
+                    grp_row = grp_box.row(align=True)
+                else:
+                    grp_row = box.row(align=True)
                 grp_row.scale_y = 0.85
 
                 if not is_conn or is_muted:
@@ -114,13 +144,18 @@ def draw_gn_bake_ui(layout, context):
                 op_grp_nav.modifier_name = mod_name
                 op_grp_nav.node_tree_name = b.get("tree_name", "")
                 op_grp_nav.node_name = b.get("node_name", "")
+                op_grp_nav.group_chain_json = chain_json
 
                 if is_collapsed:
                     skip_below_depth = depth
                 continue
 
-            # 2. Node Item Row
-            row = box.row(align=True)
+            # 2. Node Item Row (Highlighted container if active in Node Editor)
+            if is_selected:
+                row_box = box.box()
+                row = row_box.row(align=True)
+            else:
+                row = box.row(align=True)
             row.scale_y = 0.9
 
             if not is_conn:
@@ -148,6 +183,7 @@ def draw_gn_bake_ui(layout, context):
                 op_node_nav.modifier_name = mod_name
                 op_node_nav.node_tree_name = b.get("tree_name", "")
                 op_node_nav.node_name = b.get("node_name", "")
+                op_node_nav.group_chain_json = chain_json
             else:
                 left.label(text="", icon='BLANK1')
 
@@ -172,6 +208,10 @@ def draw_gn_bake_ui(layout, context):
                 display_text += " [Muted]"
 
             left.label(text=display_text, icon=node_icon)
+
+            # Active selection indicator icon if selected in editor
+            if is_selected:
+                left.label(text="", icon='RESTRICT_SELECT_OFF')
 
             # Right section: Right-aligned Frame info + Action buttons (Active & functional)
             right = split.row(align=True)

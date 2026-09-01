@@ -63,6 +63,7 @@ class DummyOperator:
         self.node_name = ""
         self.bake_id = 0
         self.group_key = ""
+        self.group_chain_json = ""
 
 
 class TestGNBakeControl(unittest.TestCase):

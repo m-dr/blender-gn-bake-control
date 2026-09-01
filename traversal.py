@@ -54,12 +54,14 @@ def compute_tree_bake_stages(
     node_tree,
     depth=0,
     group_hierarchy=None,
+    group_chain=None,
     is_parent_connected=True,
     is_parent_muted=False,
     parent_upstream_nodes=None
 ):
     """
-    Compute DAG longest-path topological execution stages, clean local number tags, and upstream dependencies.
+    Compute DAG longest-path topological execution stages, clean local number tags, upstream dependencies,
+    and exact breadcrumb navigation chains.
     Returns (connected_items, disconnected_items).
     """
     if not node_tree:
@@ -67,6 +69,8 @@ def compute_tree_bake_stages(
 
     if group_hierarchy is None:
         group_hierarchy = []
+    if group_chain is None:
+        group_chain = []
     if parent_upstream_nodes is None:
         parent_upstream_nodes = []
 
@@ -159,6 +163,7 @@ def compute_tree_bake_stages(
                     "depth": depth,
                     "node": node,
                     "tree": node_tree,
+                    "group_chain": list(group_chain),
                     "is_group": False,
                     "is_connected": is_parent_connected,
                     "is_muted": node_muted,
@@ -167,10 +172,12 @@ def compute_tree_bake_stages(
                 })
             elif node.type == 'GROUP' and getattr(node, "node_tree", None):
                 group_name = node.label if node.label else node.node_tree.name
+                sub_group_chain = group_chain + [(node.node_tree.name, node.name)]
                 sub_conn, sub_dis = compute_tree_bake_stages(
                     node.node_tree,
                     depth=depth + 1,
                     group_hierarchy=group_hierarchy + [group_name],
+                    group_chain=sub_group_chain,
                     is_parent_connected=is_parent_connected,
                     is_parent_muted=node_muted,
                     parent_upstream_nodes=all_upstream,
@@ -182,6 +189,7 @@ def compute_tree_bake_stages(
                     "depth": depth,
                     "node": node,
                     "tree": node_tree,
+                    "group_chain": list(group_chain),
                     "is_group": True,
                     "group_tree": node.node_tree,
                     "is_connected": is_parent_connected,
@@ -209,6 +217,7 @@ def compute_tree_bake_stages(
             "depth": depth,
             "node": dn,
             "tree": node_tree,
+            "group_chain": list(group_chain),
             "is_group": False,
             "is_connected": False,
             "is_muted": dn.mute if hasattr(dn, "mute") else False,
@@ -410,8 +419,11 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "num_tag": item.get("num_tag", ""),
                 "group_name": item.get("group_name", ""),
                 "depth": item.get("depth", 0),
+                "node": node,
+                "tree": item.get("tree"),
                 "node_name": node.name if node else "",
                 "tree_name": item["tree"].name if item.get("tree") else "",
+                "group_chain": item.get("group_chain", []),
                 "bake_id": b_item.bake_id if b_item else 0,
                 "mode": mode,
                 "frame_info": frame_info,
@@ -474,8 +486,11 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "num_tag": f"{next_idx}",
                 "group_name": "",
                 "depth": 0,
+                "node": node,
+                "tree": mod.node_group,
                 "node_name": node.name if node else "",
                 "tree_name": mod.node_group.name if mod.node_group else "",
+                "group_chain": [],
                 "bake_id": b_item.bake_id,
                 "mode": mode,
                 "frame_info": frame_info,
