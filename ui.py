@@ -4,7 +4,6 @@ from bpy.types import Panel
 
 from .traversal import get_object_bake_list
 from .preferences import get_preferences
-from .operators import ACTIVE_BATCH_STATE
 
 
 def draw_gn_bake_ui(layout, context):
@@ -19,9 +18,6 @@ def draw_gn_bake_ui(layout, context):
     show_frame_range = state.show_frame_range if state else True
     show_stats = state.show_stats if state else False
     collapsed_groups = set(state.collapsed_groups.split(";")) if (state and state.collapsed_groups) else set()
-
-    is_batch_baking = bool(ACTIVE_BATCH_STATE.get("is_baking") and ACTIVE_BATCH_STATE.get("object_name") == obj.name)
-    batch_status = ACTIVE_BATCH_STATE.get("status", {}) if is_batch_baking else {}
 
     # Detect active selected node in Node Editor space
     active_editor_node = None
@@ -39,28 +35,31 @@ def draw_gn_bake_ui(layout, context):
 
     mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=show_disconnected)
 
-    # 1. Toolbar row: Filter, Flatten, Frames, and Stats toggles
-    row_tools = layout.row(align=True)
+    # 1. Toolbar: 2 tidy rows to prevent any text truncation
+    row_tools1 = layout.row(align=True)
     if state:
-        row_tools.prop(
+        row_tools1.prop(
             state,
             "show_disconnected",
             text="Show Disc/Muted",
             icon='HIDE_OFF' if state.show_disconnected else 'HIDE_ON'
         )
-        row_tools.prop(
+        row_tools1.prop(
             state,
             "flatten_hierarchy",
             text="Flatten",
             icon='ALIGN_JUSTIFY' if state.flatten_hierarchy else 'OUTLINER'
         )
-        row_tools.prop(
+
+    row_tools2 = layout.row(align=True)
+    if state:
+        row_tools2.prop(
             state,
             "show_frame_range",
             text="Frames",
             icon='TIME' if state.show_frame_range else 'RESTRICT_VIEW_ON'
         )
-        row_tools.prop(
+        row_tools2.prop(
             state,
             "show_stats",
             text="Stats",
@@ -69,11 +68,12 @@ def draw_gn_bake_ui(layout, context):
 
     # 2. Permanent Static Frame Policy Row (Always shown)
     if state:
-        row_stat_settings = layout.row(align=True)
-        row_stat_settings.scale_y = 0.9
-        row_stat_settings.prop(state, "static_bake_mode", text="Static Frame")
+        row_stat = layout.row(align=True)
+        row_stat.scale_y = 0.9
+        row_stat.label(text="Static Frame:")
+        row_stat.prop(state, "static_bake_mode", text="")
         if state.static_bake_mode == 'GLOBAL':
-            row_stat_settings.prop(state, "static_global_frame", text="Frame")
+            row_stat.prop(state, "static_global_frame", text="Frame")
 
     # 3. Batch Operations row: Rebake Stale, Clear Stale, (Re)bake All, Clear All
     row_batch = layout.row(align=True)
@@ -175,13 +175,9 @@ def draw_gn_bake_ui(layout, context):
                 op_toggle.modifier_name = mod_name
                 op_toggle.group_key = group_key
 
-                grp_icon = 'RESTRICT_VIEW_ON' if is_muted else 'NODETREE'
+                grp_icon = 'RESTRICT_SELECT_OFF' if is_selected else ('RESTRICT_VIEW_ON' if is_muted else 'NODETREE')
                 grp_label = f"[{b['num_tag']}]  {b['name']}" + (" [Muted]" if is_muted else "")
                 grp_row.label(text=grp_label, icon=grp_icon)
-
-                # Active selection indicator icon if group node is selected in editor
-                if is_selected:
-                    grp_row.label(text="", icon='RESTRICT_SELECT_OFF')
 
                 op_grp_nav = grp_row.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
                 op_grp_nav.modifier_name = mod_name
@@ -200,12 +196,18 @@ def draw_gn_bake_ui(layout, context):
             if not is_conn:
                 row.active = False
 
-            # Proportional split: Left (Indentation + Status + Jump + Stage/Node), Right (Frame + Stats + Bake + Clear)
-            split_factor = 0.50 if show_stats else (0.58 if show_frame_range else 0.68)
-            split = row.split(factor=split_factor, align=True)
+            # Exact structured split: Left (Name area) vs Right (Uniform columns area)
+            if show_frame_range and show_stats:
+                split_factor = 0.35
+            elif show_frame_range or show_stats:
+                split_factor = 0.44
+            else:
+                split_factor = 0.54
+
+            split_main = row.split(factor=split_factor, align=True)
 
             # Left section (dimmed visually if muted or disconnected)
-            left = split.row(align=True)
+            left = split_main.row(align=True)
             if is_muted or not is_conn:
                 left.active = False
 
@@ -213,19 +215,8 @@ def draw_gn_bake_ui(layout, context):
             for _ in range(depth):
                 left.label(text="", icon='BLANK1')
 
-            # Status indicator icon:
-            # During active batch baking: Orange (Pending) -> Yellow (Current) -> Green (Done)
-            if is_batch_baking and bake_id in batch_status:
-                b_st = batch_status[bake_id]
-                if b_st == 'PENDING':
-                    icon = 'RADIOBUT_ON'  # Orange pending
-                elif b_st == 'CURRENT':
-                    icon = 'RESTRICT_SELECT_OFF'  # Yellow active indicator
-                else:
-                    icon = 'CHECKMARK'  # Green done
-            else:
-                icon = b.get("status_icon", 'CHECKMARK' if b.get("has_cache") else 'RADIOBUT_OFF')
-
+            # 3-State cache status indicator (UNBAKED: RADIOBUT_OFF, BAKED: CHECKMARK, STALE: FILE_REFRESH)
+            icon = b.get("status_icon", 'CHECKMARK' if b.get("has_cache") else 'RADIOBUT_OFF')
             left.label(text="", icon=icon)
 
             # Compact right arrow navigate & frame node button
@@ -238,8 +229,10 @@ def draw_gn_bake_ui(layout, context):
             else:
                 left.label(text="", icon='BLANK1')
 
-            # Node display name + Simulation / Mute / Type icon
-            if is_muted:
+            # Node display name + Simulation / Mute / Type / Selected icon in fixed slot
+            if is_selected:
+                node_icon = 'RESTRICT_SELECT_OFF'
+            elif is_muted:
                 node_icon = 'RESTRICT_VIEW_ON'
             elif b.get("is_simulation"):
                 node_icon = 'AUTO'
@@ -260,41 +253,93 @@ def draw_gn_bake_ui(layout, context):
 
             left.label(text=display_text, icon=node_icon)
 
-            # Active selection indicator icon if selected in editor
-            if is_selected:
-                left.label(text="", icon='RESTRICT_SELECT_OFF')
-
-            # Right section: Frame info + Action buttons + Far right Stats duration
-            right = split.row(align=True)
-            right.alignment = 'RIGHT'
+            # Right section: Fixed-width proportional sub-splits for perfect vertical column alignment
+            right = split_main.row(align=True)
             right.active = True
 
-            # Frame info column (toggled via Frames button)
-            if show_frame_range:
-                frame_icon = 'IMAGE_DATA' if b["mode"] == 'STILL' else 'TIME'
-                right.label(text=b["frame_info"], icon=frame_icon)
+            frame_icon = 'IMAGE_DATA' if b["mode"] == 'STILL' else 'TIME'
 
-            # Bake action button (Text)
-            if bake_id:
-                op_bake = right.operator("object.gn_bake_single_action", text="Bake")
-                op_bake.action = 'BAKE'
-                op_bake.modifier_name = mod_name
-                op_bake.bake_id = bake_id
+            if show_frame_range and show_stats:
+                col_f = right.split(factor=0.38, align=True)
+                col_f.label(text=b["frame_info"], icon=frame_icon)
 
-                # Clear cache action button (Trash can icon)
-                sub_clear = right.row(align=True)
-                sub_clear.enabled = b["has_cache"]
-                op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
-                op_clear.action = 'CLEAR'
-                op_clear.modifier_name = mod_name
-                op_clear.bake_id = bake_id
+                col_ops = col_f.split(factor=0.58, align=True)
+                if bake_id:
+                    op_bake = col_ops.operator("object.gn_bake_single_action", text="Bake")
+                    op_bake.action = 'BAKE'
+                    op_bake.modifier_name = mod_name
+                    op_bake.bake_id = bake_id
 
-            # Far right Stats column (Uniform width, plain text duration without icon)
-            if show_stats:
-                dur_col = right.row(align=True)
-                dur_col.alignment = 'RIGHT'
-                dur_text = b.get("duration_str", "-")
-                dur_col.label(text=dur_text)
+                    sub_clear = col_ops.row(align=True)
+                    sub_clear.enabled = b["has_cache"]
+                    op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
+                    op_clear.action = 'CLEAR'
+                    op_clear.modifier_name = mod_name
+                    op_clear.bake_id = bake_id
+                else:
+                    col_ops.label(text="")
+
+                col_dur = col_ops.row(align=True)
+                col_dur.alignment = 'RIGHT'
+                col_dur.label(text=b.get("duration_str", "-"))
+
+            elif show_frame_range and not show_stats:
+                col_f = right.split(factor=0.45, align=True)
+                col_f.label(text=b["frame_info"], icon=frame_icon)
+
+                col_ops = col_f.row(align=True)
+                if bake_id:
+                    op_bake = col_ops.operator("object.gn_bake_single_action", text="Bake")
+                    op_bake.action = 'BAKE'
+                    op_bake.modifier_name = mod_name
+                    op_bake.bake_id = bake_id
+
+                    sub_clear = col_ops.row(align=True)
+                    sub_clear.enabled = b["has_cache"]
+                    op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
+                    op_clear.action = 'CLEAR'
+                    op_clear.modifier_name = mod_name
+                    op_clear.bake_id = bake_id
+                else:
+                    col_ops.label(text="")
+
+            elif not show_frame_range and show_stats:
+                col_ops = right.split(factor=0.65, align=True)
+                if bake_id:
+                    op_bake = col_ops.operator("object.gn_bake_single_action", text="Bake")
+                    op_bake.action = 'BAKE'
+                    op_bake.modifier_name = mod_name
+                    op_bake.bake_id = bake_id
+
+                    sub_clear = col_ops.row(align=True)
+                    sub_clear.enabled = b["has_cache"]
+                    op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
+                    op_clear.action = 'CLEAR'
+                    op_clear.modifier_name = mod_name
+                    op_clear.bake_id = bake_id
+                else:
+                    col_ops.label(text="")
+
+                col_dur = col_ops.row(align=True)
+                col_dur.alignment = 'RIGHT'
+                col_dur.label(text=b.get("duration_str", "-"))
+
+            else:
+                col_ops = right.row(align=True)
+                if bake_id:
+                    op_bake = col_ops.operator("object.gn_bake_single_action", text="Bake")
+                    op_bake.action = 'BAKE'
+                    op_bake.modifier_name = mod_name
+                    op_bake.bake_id = bake_id
+
+                    sub_clear = col_ops.row(align=True)
+                    sub_clear.enabled = b["has_cache"]
+                    op_clear = sub_clear.operator("object.gn_bake_single_action", text="", icon='TRASH')
+                    op_clear.action = 'CLEAR'
+                    op_clear.modifier_name = mod_name
+                    op_clear.bake_id = bake_id
+                else:
+                    col_ops.label(text="")
 
 
 class DATA_PT_gn_bake_control(Panel):
