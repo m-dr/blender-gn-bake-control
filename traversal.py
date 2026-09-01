@@ -91,7 +91,8 @@ def traverse_tree_bakes(node_tree, prefix="", is_parent_connected=True, is_paren
                 disconnected_bakes.append(item)
 
         elif node.type == 'GROUP' and getattr(node, "node_tree", None):
-            sub_prefix = f"{prefix}{name} > " if prefix else f"{name} > "
+            group_name = node.label if node.label else node.node_tree.name
+            sub_prefix = f"{prefix}{group_name} > " if prefix else f"{group_name} > "
             sub_conn, sub_dis = traverse_tree_bakes(
                 node.node_tree,
                 prefix=sub_prefix,

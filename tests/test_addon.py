@@ -156,6 +156,25 @@ class TestGNBakeControl(unittest.TestCase):
         sim_bake = [b for b in mod_data[0]["bakes"] if b["name"] == "Simulation Output"][0]
         self.assertFalse(sim_bake["is_muted"])
 
+    def test_07_group_naming_and_subgroup_breadcrumbs(self):
+        """Verify group names use node_tree.name and breadcrumbs are properly built."""
+        obj = bpy.data.objects.get("ANIM")
+        bpy.context.view_layer.objects.active = obj
+
+        mod_data = traversal.get_object_bake_list(obj)
+        mod2 = mod_data[1]
+        self.assertEqual(mod2["modifier_name"], "GeometryNodes.001")
+        # Should be 'Bake Group > Bake.001' not 'Bake.001 > Bake.001'
+        self.assertEqual(mod2["bakes"][1]["path"], "Bake Group > Bake.001")
+
+        # Test navigation into nested group
+        res = bpy.ops.object.gn_bake_navigate_to(
+            modifier_name="GeometryNodes.001",
+            node_tree_name="Bake Group",
+            node_name="Bake.001"
+        )
+        self.assertEqual(res, {'FINISHED'})
+
 
 if __name__ == "__main__":
     unittest.main(argv=['first-arg-is-ignored'], exit=False)

@@ -3,6 +3,31 @@ from bpy.types import Operator
 from bpy.props import StringProperty
 
 
+def find_group_chain(current_tree, target_tree, visited=None):
+    """
+    Recursively find the sequence of (sub_tree, group_node) leading from current_tree to target_tree.
+    """
+    if not current_tree or not target_tree:
+        return None
+    if visited is None:
+        visited = set()
+    if current_tree in visited:
+        return None
+    visited.add(current_tree)
+
+    if current_tree == target_tree:
+        return []
+
+    for node in current_tree.nodes:
+        if node.type == 'GROUP' and getattr(node, "node_tree", None):
+            if node.node_tree == target_tree:
+                return [(node.node_tree, node)]
+            sub_chain = find_group_chain(node.node_tree, target_tree, visited)
+            if sub_chain is not None:
+                return [(node.node_tree, node)] + sub_chain
+    return None
+
+
 class OBJECT_OT_gn_bake_navigate_to(Operator):
     bl_idname = "object.gn_bake_navigate_to"
     bl_label = "Navigate to Node"
@@ -19,6 +44,7 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
             return {'CANCELLED'}
 
         # 1. If modifier is specified, set active in modifier stack
+        root_tree = None
         if self.modifier_name:
             mod = obj.modifiers.get(self.modifier_name)
             if mod:
@@ -26,15 +52,18 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
                     obj.modifiers.active = mod
                 except Exception:
                     pass
+                if mod.type == 'NODES':
+                    root_tree = mod.node_group
 
         # 2. Find target node tree
         ntree = None
         if self.node_tree_name:
             ntree = bpy.data.node_groups.get(self.node_tree_name)
-        elif self.modifier_name:
-            mod = obj.modifiers.get(self.modifier_name)
-            if mod and mod.type == 'NODES':
-                ntree = mod.node_group
+        elif root_tree:
+            ntree = root_tree
+
+        if not root_tree and ntree:
+            root_tree = ntree
 
         # 3. Find Node Editor space, area, and window region in active screen
         target_space = None
@@ -59,17 +88,29 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
             self.report({'WARNING'}, "No Geometry Node Editor is open on screen.")
             return {'CANCELLED'}
 
-        if ntree:
+        if root_tree:
             target_space.tree_type = 'GeometryNodeTree'
-            target_space.node_tree = ntree
+            target_space.node_tree = root_tree
+
+            # Build sub-group breadcrumb path if target is a sub-group
+            if ntree and ntree != root_tree:
+                chain = find_group_chain(root_tree, ntree)
+                if chain:
+                    for sub_tree, g_node in chain:
+                        try:
+                            target_space.path.append(sub_tree, node=g_node)
+                        except Exception:
+                            pass
+
+            active_tree = ntree if ntree else root_tree
 
             if self.node_name:
-                target_node = ntree.nodes.get(self.node_name)
+                target_node = active_tree.nodes.get(self.node_name)
                 if target_node:
-                    for n in ntree.nodes:
+                    for n in active_tree.nodes:
                         n.select = False
                     target_node.select = True
-                    ntree.nodes.active = target_node
+                    active_tree.nodes.active = target_node
 
                     # Focus view (Numpad .) onto the selected node
                     if not bpy.app.background and target_area and target_region:
@@ -79,10 +120,10 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
                             except Exception:
                                 pass
 
-                    self.report({'INFO'}, f"Framed '{target_node.name}' in '{ntree.name}'")
+                    self.report({'INFO'}, f"Framed '{target_node.name}' in '{active_tree.name}'")
                     return {'FINISHED'}
 
-            # Frame all in node tree if only navigating to modifier
+            # Frame all in node tree if navigating to modifier
             if not bpy.app.background and target_area and target_region:
                 with context.temp_override(area=target_area, region=target_region, space_data=target_space):
                     try:
@@ -90,7 +131,7 @@ class OBJECT_OT_gn_bake_navigate_to(Operator):
                     except Exception:
                         pass
 
-            self.report({'INFO'}, f"Navigated to '{ntree.name}'")
+            self.report({'INFO'}, f"Navigated to '{root_tree.name}'")
             return {'FINISHED'}
 
         return {'FINISHED'}
