@@ -56,45 +56,76 @@ def draw_gn_bake_ui(layout, context):
         current_group_box = None
         current_group_name = None
 
+        # Track sibling stages for visual grouping
+        current_stage_box = None
+        current_stage_id = None
+
+        # Group items by base stage prefix for sibling nesting
+        # e.g. "1.1" and "1.2" have base stage "1"
+        stage_counts = {}
+        for b in bakes:
+            if not b.get("is_group"):
+                tag = b.get("num_tag", "")
+                parts = tag.split(".")
+                if len(parts) >= 2:
+                    base_stage = ".".join(parts[:-1])
+                    stage_counts[base_stage] = stage_counts.get(base_stage, 0) + 1
+
         for b in bakes:
             # Handle Group Header items
             if b.get("is_group"):
                 current_group_name = b.get("name")
                 current_group_box = box.box()
                 grp_head = current_group_box.row(align=True)
-                grp_head.label(text=f"[{b['num_tag']}]", icon='NONE')
-                grp_head.label(text=f"{b['name']}", icon='NODETREE')
+                grp_head.label(text=f"[{b['num_tag']}]  {b['name']}", icon='NODETREE')
                 op_grp_nav = grp_head.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
                 op_grp_nav.modifier_name = mod_name
                 op_grp_nav.node_tree_name = b.get("tree_name", "")
                 op_grp_nav.node_name = b.get("node_name", "")
+                current_stage_box = None
+                current_stage_id = None
                 continue
 
-            # Determine container (sub-box if inside a group, else main modifier box)
             group_name = b.get("group_name", "")
             if not group_name:
                 current_group_box = None
                 current_group_name = None
 
-            target_container = current_group_box if (current_group_box and group_name) else box
+            parent_box = current_group_box if (current_group_box and group_name) else box
+
+            # Check if this item belongs to a multi-sibling parallel branch stage
+            tag = b.get("num_tag", "")
+            parts = tag.split(".")
+            base_stage = ".".join(parts[:-1]) if len(parts) >= 2 else None
+
+            if base_stage and stage_counts.get(base_stage, 0) > 1:
+                # Sibling branch stage
+                if current_stage_id != base_stage:
+                    current_stage_id = base_stage
+                    current_stage_box = parent_box.box()
+                    # Optional subtle branch stage label
+                    branch_head = current_stage_box.row(align=True)
+                    branch_head.label(text=f"Branch Stage [{base_stage}] ({stage_counts[base_stage]} Parallel Inputs)", icon='CON_FOLLOWPATH')
+                target_container = current_stage_box
+            else:
+                current_stage_id = None
+                current_stage_box = None
+                target_container = parent_box
+
             row = target_container.row(align=True)
 
             is_conn = b.get("is_connected", True)
             is_muted = b.get("is_muted", False)
 
-            if not is_conn or is_muted:
+            # Dim row only if disconnected (muted nodes remain fully active for baking per Blender behavior)
+            if not is_conn:
                 row.active = False
 
-            # Proportional split: Left (Stage Badge + Status + Jump + Node), Right (Frame + Bake + Clear)
-            split = row.split(factor=0.55, align=True)
+            # Proportional split: Left (Status + Jump + Stage/Node), Right (Frame + Bake + Clear)
+            split = row.split(factor=0.58, align=True)
 
             # Left section
             left = split.row(align=True)
-
-            # Hierarchical stage number badge (e.g. [1.1], [1.2], [2.1], [3])
-            num_tag = b.get("num_tag", "")
-            if num_tag:
-                left.label(text=f"[{num_tag}]")
 
             # Cache status indicator
             icon = 'CHECKMARK' if b["has_cache"] else 'RADIOBUT_OFF'
@@ -109,9 +140,10 @@ def draw_gn_bake_ui(layout, context):
             else:
                 left.label(text="", icon='BLANK1')
 
-            # Node display name + Simulation / Type icon
+            # Combined stage badge + node display name with tight spacing
             node_icon = 'AUTO' if b.get("is_simulation") else 'PHYSICS'
-            display_text = b["name"]
+            display_text = f"[{b['num_tag']}]  {b['name']}" if b.get("num_tag") else b["name"]
+
             if not is_conn:
                 display_text += " [Disc]"
             elif is_muted:
