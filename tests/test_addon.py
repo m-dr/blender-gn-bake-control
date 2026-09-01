@@ -121,7 +121,7 @@ class TestGNBakeControl(unittest.TestCase):
         self.assertEqual(tags[1], "1.2")
         self.assertEqual(names[1], "Bake")
 
-        self.assertEqual(tags[2], "2.1")
+        self.assertEqual(tags[2], "1")
         self.assertEqual(names[2], "Simulation Output")
 
         self.assertEqual(tags[3], "3")
@@ -173,15 +173,20 @@ class TestGNBakeControl(unittest.TestCase):
         ui.draw_gn_bake_ui(dummy_layout, bpy.context)
 
     def test_06_group_mute_propagation(self):
-        """Verify muting a parent group properly mutes all nested bakes."""
+        """Verify muting a parent group properly mutes all nested bakes and filters when disconnected hidden."""
         obj = bpy.data.objects.get("ANIM")
         mod_gn = obj.modifiers["GeometryNodes"]
         group_node = mod_gn.node_group.nodes["G_Temporal Smooth Position"]
 
         group_node.mute = True
-        mod_data = traversal.get_object_bake_list(obj)
+        mod_data = traversal.get_object_bake_list(obj, show_disconnected=True)
         sim_bake = [b for b in mod_data[0]["bakes"] if b["name"] == "Simulation Output"][0]
         self.assertTrue(sim_bake["is_muted"])
+
+        # When show_disconnected is False, muted bake is filtered out
+        mod_data_filtered = traversal.get_object_bake_list(obj, show_disconnected=False)
+        sim_bakes_filtered = [b for b in mod_data_filtered[0]["bakes"] if b["name"] == "Simulation Output"]
+        self.assertEqual(len(sim_bakes_filtered), 0)
 
         group_node.mute = False
         mod_data = traversal.get_object_bake_list(obj)
@@ -200,7 +205,7 @@ class TestGNBakeControl(unittest.TestCase):
         # Nested group check
         nested_bake = [b for b in mod2["bakes"] if b["name"] == "Bake.001" and not b.get("is_group")][0]
         self.assertEqual(nested_bake["group_name"], "Bake Group")
-        self.assertEqual(nested_bake["num_tag"], "1.2.1")
+        self.assertEqual(nested_bake["num_tag"], "1")
 
         # Test navigation into nested group
         res = bpy.ops.object.gn_bake_navigate_to(

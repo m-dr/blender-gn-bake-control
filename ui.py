@@ -16,19 +16,19 @@ def draw_gn_bake_ui(layout, context):
 
     mod_data = get_object_bake_list(obj, scene=context.scene, show_disconnected=show_disconnected)
 
-    # Toolbar row with Disconnected nodes filter toggle
+    # Toolbar row with Disconnected / Muted filter toggle
     row_tools = layout.row(align=True)
     if state:
         row_tools.prop(
             state,
             "show_disconnected",
-            text="Show Disconnected / Stale",
+            text="Show Disconnected & Muted",
             icon='HIDE_OFF' if state.show_disconnected else 'HIDE_ON'
         )
 
     if not mod_data:
         box = layout.box()
-        box.label(text="No Geometry Nodes bake nodes on object.", icon='INFO')
+        box.label(text="No active Geometry Nodes bakes on object.", icon='INFO')
         return
 
     for entry in mod_data:
@@ -46,7 +46,7 @@ def draw_gn_bake_ui(layout, context):
         mod_icon = 'NODETREE' if is_enabled else 'RESTRICT_VIEW_ON'
         head.label(text=f"{mod_name}", icon=mod_icon)
 
-        count_label = f"({conn_count} Active" + (f", {dis_count} Disc)" if dis_count > 0 else ")")
+        count_label = f"({conn_count} Active" + (f", {dis_count} Disc/Muted)" if dis_count > 0 else ")")
         head.label(text=count_label)
 
         # Jump to modifier in Node Editor button
@@ -62,6 +62,8 @@ def draw_gn_bake_ui(layout, context):
             # 1. Group Folder Header Row
             if b.get("is_group"):
                 grp_row = box.row(align=True)
+                grp_row.scale_y = 0.85
+
                 if not is_conn:
                     grp_row.active = False
 
@@ -69,7 +71,9 @@ def draw_gn_bake_ui(layout, context):
                 for _ in range(depth):
                     grp_row.label(text="", icon='BLANK1')
 
-                grp_row.label(text=f"[{b['num_tag']}]  {b['name']}", icon='NODETREE')
+                grp_icon = 'RESTRICT_VIEW_ON' if is_muted else 'NODETREE'
+                grp_label = f"[{b['num_tag']}]  {b['name']}" + (" [Muted]" if is_muted else "")
+                grp_row.label(text=grp_label, icon=grp_icon)
 
                 op_grp_nav = grp_row.operator("object.gn_bake_navigate_to", text="", icon='RIGHTARROW')
                 op_grp_nav.modifier_name = mod_name
@@ -79,6 +83,8 @@ def draw_gn_bake_ui(layout, context):
 
             # 2. Node Item Row
             row = box.row(align=True)
+            row.scale_y = 0.9
+
             if not is_conn:
                 row.active = False
 
@@ -105,8 +111,14 @@ def draw_gn_bake_ui(layout, context):
             else:
                 left.label(text="", icon='BLANK1')
 
-            # Combined stage badge + node display name with tight spacing
-            node_icon = 'AUTO' if b.get("is_simulation") else 'PHYSICS'
+            # Node display name + Simulation / Mute / Type icon
+            if is_muted:
+                node_icon = 'RESTRICT_VIEW_ON'
+            elif b.get("is_simulation"):
+                node_icon = 'AUTO'
+            else:
+                node_icon = 'PHYSICS'
+
             display_text = f"[{b['num_tag']}]  {b['name']}" if b.get("num_tag") else b["name"]
 
             if not is_conn:

@@ -50,9 +50,9 @@ def node_tree_has_bakes(node_tree, visited=None):
     return False
 
 
-def compute_tree_bake_stages(node_tree, prefix_stage="", depth=0, group_hierarchy=None, is_parent_connected=True, is_parent_muted=False):
+def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent_connected=True, is_parent_muted=False):
     """
-    Compute DAG longest-path topological execution stages and hierarchical number tags (e.g. 1.1, 1.2, 2, 2.1, 3).
+    Compute DAG longest-path topological execution stages and clean local hierarchical number tags (e.g. 1.1, 1.2, 2, 3).
     Returns (connected_items, disconnected_items).
     """
     if not node_tree:
@@ -122,7 +122,6 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", depth=0, group_hierarch
 
     connected_items = []
     max_stage = max(by_stage.keys()) if by_stage else 0
-    total_stages = len(by_stage)
 
     for stage_num in sorted(by_stage.keys()):
         stage_nodes = by_stage[stage_num]
@@ -130,16 +129,7 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", depth=0, group_hierarch
         has_siblings = len(stage_nodes) > 1
 
         for idx, node in enumerate(stage_nodes, 1):
-            if prefix_stage:
-                if total_stages == 1:
-                    # Single internal stage in sub-group: append sibling index directly
-                    num_tag = f"{prefix_stage}.{idx}" if has_siblings else f"{prefix_stage}.1"
-                else:
-                    # Multiple internal stages in sub-group
-                    num_tag = f"{prefix_stage}.{stage_num}.{idx}" if has_siblings else f"{prefix_stage}.{stage_num}"
-            else:
-                num_tag = f"{stage_num}.{idx}" if has_siblings else f"{stage_num}"
-
+            num_tag = f"{stage_num}.{idx}" if has_siblings else f"{stage_num}"
             name = node.label if node.label else node.name
             node_muted = is_parent_muted or bool(getattr(node, "mute", False))
 
@@ -160,7 +150,6 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", depth=0, group_hierarch
                 group_name = node.label if node.label else node.node_tree.name
                 sub_conn, sub_dis = compute_tree_bake_stages(
                     node.node_tree,
-                    prefix_stage=num_tag,
                     depth=depth + 1,
                     group_hierarchy=group_hierarchy + [group_name],
                     is_parent_connected=is_parent_connected,
@@ -190,7 +179,7 @@ def compute_tree_bake_stages(node_tree, prefix_stage="", depth=0, group_hierarch
     disc_nodes.sort(key=lambda n: (n.location.x, -n.location.y))
 
     for i, dn in enumerate(disc_nodes, 1):
-        num_tag = f"{max_stage + i}" if not prefix_stage else f"{prefix_stage}.{max_stage + i}"
+        num_tag = f"{max_stage + i}"
         name = dn.label if dn.label else dn.name
         disconnected_items.append({
             "name": name,
@@ -213,14 +202,14 @@ def check_bake_has_cache(bake_item):
     if not bake_item:
         return False
     try:
-        # Check internal collection
         if getattr(bake_item, "data_blocks", None) and len(bake_item.data_blocks) > 0:
             return True
-        # Check disk directory
-        if getattr(bake_item, "bake_target", "") == 'DISK' and getattr(bake_item, "directory", ""):
-            cache_dir = bpy.path.abspath(bake_item.directory)
-            if os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0:
-                return True
+        if getattr(bake_target := getattr(bake_item, "bake_target", ""), "upper", lambda: "")() == 'DISK' or bake_target == 'DISK':
+            directory = getattr(bake_item, "directory", "")
+            if directory:
+                cache_dir = bpy.path.abspath(directory)
+                if os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0:
+                    return True
     except Exception:
         pass
     return False
@@ -229,7 +218,7 @@ def check_bake_has_cache(bake_item):
 def get_object_bake_list(obj, scene=None, show_disconnected=True):
     """
     Return all modifiers and their bake nodes in hierarchical DAG execution sequence
-    with number badges ([1.1], [1.2], [2], [2.1], [3]), group encapsulation, depth, and metadata.
+    with clean compact local numbers, group encapsulation, depth, and metadata.
     """
     if not obj or not hasattr(obj, "modifiers"):
         return []
@@ -301,7 +290,30 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             }
 
         connected_bakes = [build_bake_info(it) for it in all_conn_items]
-        disconnected_bakes = [build_bake_info(it) for it in all_dis_items]
+
+        # Calculate max root stage for clean sequential disconnected numbering
+        root_stages = []
+        for b in connected_bakes:
+            if b.get("depth", 0) == 0:
+                tag = b.get("num_tag", "")
+                if tag and "." not in tag:
+                    try:
+                        root_stages.append(int(tag))
+                    except ValueError:
+                        pass
+                elif tag:
+                    try:
+                        root_stages.append(int(tag.split(".")[0]))
+                    except ValueError:
+                        pass
+        max_root_stage = max(root_stages) if root_stages else len(connected_bakes)
+
+        # Renumber disconnected items starting after max_root_stage
+        disconnected_bakes = []
+        for i, it in enumerate(all_dis_items, 1):
+            info = build_bake_info(it)
+            info["num_tag"] = f"{max_root_stage + i}"
+            disconnected_bakes.append(info)
 
         # Remaining unmapped bakes in mod.bakes
         for b_item in unmapped_bakes:
@@ -318,7 +330,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 else:
                     frame_info = f"{scene_frame_start} – {scene_frame_end}"
 
-            next_idx = len(connected_bakes) + len(disconnected_bakes) + 1
+            next_idx = max_root_stage + len(disconnected_bakes) + 1
             disconnected_bakes.append({
                 "name": node_name,
                 "num_tag": f"{next_idx}",
@@ -337,18 +349,39 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "bake_item": b_item,
             })
 
-        all_mod_bakes = connected_bakes + (disconnected_bakes if show_disconnected else [])
+        # Separate active vs muted/stale for filtering
+        actual_conn_active = [b for b in connected_bakes if not b.get("is_group") and not b.get("is_muted")]
+        actual_conn_muted = [b for b in connected_bakes if not b.get("is_group") and b.get("is_muted")]
+        actual_dis = [b for b in disconnected_bakes if not b.get("is_group")]
 
-        if all_mod_bakes:
-            actual_conn = [b for b in connected_bakes if not b.get("is_group")]
-            actual_dis = [b for b in disconnected_bakes if not b.get("is_group")]
+        # Total stale / disc count = disconnected nodes + muted bakes
+        total_stale_count = len(actual_dis) + len(actual_conn_muted)
 
+        # If show_disconnected is False, filter out disconnected and muted bakes and groups that only contain muted bakes
+        if not show_disconnected:
+            visible_bakes = []
+            for b in connected_bakes:
+                if b.get("is_muted"):
+                    continue
+                if b.get("is_group"):
+                    group_name = b.get("name")
+                    has_active_child = any(
+                        not child.get("is_muted") and not child.get("is_group") and group_name in child.get("group_name", "")
+                        for child in connected_bakes
+                    )
+                    if not has_active_child:
+                        continue
+                visible_bakes.append(b)
+        else:
+            visible_bakes = connected_bakes + disconnected_bakes
+
+        if visible_bakes or show_disconnected:
             modifiers_data.append({
                 "modifier_name": mod.name,
                 "is_enabled": mod.show_viewport,
-                "connected_count": len(actual_conn),
-                "disconnected_count": len(actual_dis),
-                "bakes": all_mod_bakes,
+                "connected_count": len(actual_conn_active),
+                "disconnected_count": total_stale_count,
+                "bakes": visible_bakes,
             })
 
     return modifiers_data
