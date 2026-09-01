@@ -31,7 +31,7 @@ def get_reachable_nodes_in_tree(node_tree):
     return visited
 
 
-def traverse_tree_bakes(node_tree, prefix="", is_parent_connected=True):
+def traverse_tree_bakes(node_tree, prefix="", is_parent_connected=True, is_parent_muted=False):
     """
     Recursively find all bake nodes and simulation outputs in a node tree.
     Returns (connected_bakes, disconnected_bakes).
@@ -73,6 +73,7 @@ def traverse_tree_bakes(node_tree, prefix="", is_parent_connected=True):
         name = node.label if node.label else node.name
         path = f"{prefix}{name}" if prefix else name
         node_conn = is_parent_connected and (node in reachable)
+        node_muted = is_parent_muted or bool(getattr(node, "mute", False))
 
         if node.type in ('BAKE', 'SIMULATION_OUTPUT'):
             item = {
@@ -81,7 +82,7 @@ def traverse_tree_bakes(node_tree, prefix="", is_parent_connected=True):
                 "node": node,
                 "tree": node_tree,
                 "is_connected": node_conn,
-                "is_muted": node.mute,
+                "is_muted": node_muted,
                 "is_simulation": node.type == 'SIMULATION_OUTPUT',
             }
             if node_conn:
@@ -91,7 +92,12 @@ def traverse_tree_bakes(node_tree, prefix="", is_parent_connected=True):
 
         elif node.type == 'GROUP' and getattr(node, "node_tree", None):
             sub_prefix = f"{prefix}{name} > " if prefix else f"{name} > "
-            sub_conn, sub_dis = traverse_tree_bakes(node.node_tree, prefix=sub_prefix, is_parent_connected=node_conn)
+            sub_conn, sub_dis = traverse_tree_bakes(
+                node.node_tree,
+                prefix=sub_prefix,
+                is_parent_connected=node_conn,
+                is_parent_muted=node_muted,
+            )
             connected_bakes.extend(sub_conn)
             disconnected_bakes.extend(sub_dis)
 

@@ -140,6 +140,22 @@ class TestGNBakeControl(unittest.TestCase):
         dummy_layout = DummyLayout()
         ui.draw_gn_bake_ui(dummy_layout, bpy.context)
 
+    def test_06_group_mute_propagation(self):
+        """Verify muting a parent group properly mutes all nested bakes."""
+        obj = bpy.data.objects.get("ANIM")
+        mod_gn = obj.modifiers["GeometryNodes"]
+        group_node = mod_gn.node_group.nodes["G_Temporal Smooth Position"]
+
+        group_node.mute = True
+        mod_data = traversal.get_object_bake_list(obj)
+        sim_bake = [b for b in mod_data[0]["bakes"] if b["name"] == "Simulation Output"][0]
+        self.assertTrue(sim_bake["is_muted"])
+
+        group_node.mute = False
+        mod_data = traversal.get_object_bake_list(obj)
+        sim_bake = [b for b in mod_data[0]["bakes"] if b["name"] == "Simulation Output"][0]
+        self.assertFalse(sim_bake["is_muted"])
+
 
 if __name__ == "__main__":
     unittest.main(argv=['first-arg-is-ignored'], exit=False)
