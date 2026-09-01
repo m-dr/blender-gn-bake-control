@@ -45,9 +45,6 @@ def draw_gn_bake_ui(layout, context, is_npanel=False):
     if state:
         row_tools.prop(state, "compact_ui", text="", icon='COLLAPSEMENU' if state.compact_ui else 'MENU_PANEL')
         row_tools.prop(state, "show_missing_only", text="", icon='HIDE_ON' if state.show_missing_only else 'HIDE_OFF')
-    
-    # Reload from disk button (DEV mode)
-    row_tools.operator("object.gn_bake_reload_addon", text="", icon='FILE_REFRESH')
 
     if state:
         row_filter = layout.row(align=True)
