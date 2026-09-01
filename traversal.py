@@ -50,7 +50,14 @@ def node_tree_has_bakes(node_tree, visited=None):
     return False
 
 
-def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent_connected=True, is_parent_muted=False):
+def compute_tree_bake_stages(
+    node_tree,
+    depth=0,
+    group_hierarchy=None,
+    is_parent_connected=True,
+    is_parent_muted=False,
+    parent_upstream_nodes=None
+):
     """
     Compute DAG longest-path topological execution stages, clean local number tags, and upstream dependencies.
     Returns (connected_items, disconnected_items).
@@ -60,6 +67,8 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
 
     if group_hierarchy is None:
         group_hierarchy = []
+    if parent_upstream_nodes is None:
+        parent_upstream_nodes = []
 
     reachable = get_reachable_nodes_in_tree(node_tree)
 
@@ -98,27 +107,31 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
         elif n.type == 'GROUP' and getattr(n, "node_tree", None) and node_tree_has_bakes(n.node_tree):
             interesting_nodes.append(n)
 
-    # Compute longest path stage & upstream dependency closure
-    stages = {}
-    upstream_dependencies = defaultdict(set)
+    interesting_set = set(interesting_nodes)
 
+    # Full upstream DAG dependency closure
+    upstream_dependencies = defaultdict(set)
     for n in interesting_nodes:
-        max_prev_stage = 0
-        visited_up = set()
-        up_q = list(upstream_adj[n])
-        while up_q:
-            u = up_q.pop(0)
-            if u in visited_up:
-                continue
-            visited_up.add(u)
-            if u in stages:
-                upstream_dependencies[n].add(u)
-                if stages[u] > max_prev_stage:
-                    max_prev_stage = stages[u]
-            for prev_u in upstream_adj[u]:
-                if prev_u in reachable and prev_u not in visited_up:
-                    up_q.append(prev_u)
-        stages[n] = max_prev_stage + 1
+        queue = list(upstream_adj.get(n, []))
+        visited_up = set(queue)
+        while queue:
+            curr = queue.pop(0)
+            if curr in interesting_set and curr != n:
+                upstream_dependencies[n].add(curr)
+            for prev in upstream_adj.get(curr, []):
+                if prev in reachable and prev not in visited_up:
+                    visited_up.add(prev)
+                    queue.append(prev)
+
+    # Topological execution stages based on upstream dependencies
+    stages = {}
+    for n in interesting_nodes:
+        up_deps = upstream_dependencies[n]
+        if not up_deps:
+            stages[n] = 1
+        else:
+            known_stages = [stages[u] for u in up_deps if u in stages]
+            stages[n] = max(known_stages) + 1 if known_stages else 1
 
     by_stage = defaultdict(list)
     for n in interesting_nodes:
@@ -136,6 +149,7 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
             num_tag = f"{stage_num}.{idx}" if has_siblings else f"{stage_num}"
             name = node.label if node.label else node.name
             node_muted = is_parent_muted or bool(getattr(node, "mute", False))
+            all_upstream = list(upstream_dependencies[node]) + parent_upstream_nodes
 
             if node.type in ('BAKE', 'SIMULATION_OUTPUT'):
                 connected_items.append({
@@ -149,7 +163,7 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
                     "is_connected": is_parent_connected,
                     "is_muted": node_muted,
                     "is_simulation": node.type == 'SIMULATION_OUTPUT',
-                    "upstream_nodes": list(upstream_dependencies[node]),
+                    "upstream_nodes": all_upstream,
                 })
             elif node.type == 'GROUP' and getattr(node, "node_tree", None):
                 group_name = node.label if node.label else node.node_tree.name
@@ -159,6 +173,7 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
                     group_hierarchy=group_hierarchy + [group_name],
                     is_parent_connected=is_parent_connected,
                     is_parent_muted=node_muted,
+                    parent_upstream_nodes=all_upstream,
                 )
                 connected_items.append({
                     "name": group_name,
@@ -172,7 +187,7 @@ def compute_tree_bake_stages(node_tree, depth=0, group_hierarchy=None, is_parent
                     "is_connected": is_parent_connected,
                     "is_muted": node_muted,
                     "is_simulation": False,
-                    "upstream_nodes": list(upstream_dependencies[node]),
+                    "upstream_nodes": all_upstream,
                     "children": sub_conn,
                 })
 
@@ -320,6 +335,15 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
             node_has_cache[node] = has_c
             node_timestamps[node] = ts
 
+        # Groups take max timestamp of their child items
+        for item in all_conn_items + all_dis_items:
+            if item.get("is_group"):
+                node = item.get("node")
+                group_children = item.get("children", [])
+                child_ts = [node_timestamps.get(c.get("node"), 0.0) for c in group_children if c.get("node")]
+                if child_ts:
+                    node_timestamps[node] = max(child_ts)
+
         # Track max bake time in this modifier to propagate to downstream modifiers
         current_mod_max_time = 0.0
         for ts in node_timestamps.values():
@@ -341,7 +365,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 status_icon = 'RADIOBUT_OFF'
             else:
                 is_stale = False
-                # Check upstream nodes in same modifier tree
+                # Check upstream nodes in DAG data flow
                 for u_node in item.get("upstream_nodes", []):
                     u_time = node_timestamps.get(u_node, 0.0)
                     if u_time > node_time:
@@ -387,6 +411,7 @@ def get_object_bake_list(obj, scene=None, show_disconnected=True):
                 "is_connected": item.get("is_connected", True),
                 "is_muted": item.get("is_muted", False),
                 "is_simulation": item.get("is_simulation", False),
+                "upstream_nodes": item.get("upstream_nodes", []),
                 "bake_item": b_item,
             }
 
